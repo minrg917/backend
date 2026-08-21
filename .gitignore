@@ -1,0 +1,65 @@
+# ---- 내부 문서 (레포에 올리지 않음) ----
+# 스펙 문서와 작업 컨텍스트는 팀 내부에서만 공유한다.
+docs/
+CLAUDE.md
+
+# ---- 환경변수 / 시크릿 (절대 커밋 금지) ----
+.env
+.env.*
+!.env.example
+secrets.json
+*.pem
+*.key
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 테스트 / 커버리지
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# 타입체커 / 린터 캐시
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# ---- DB / 로컬 데이터 ----
+*.sqlite3
+*.db
+mysql-data/
+
+# ---- 업로드 파일 (영상/사진은 커밋 금지) ----
+uploads/
+media/
+*.mp4
+*.mov
+
+# ---- 로그 ----
+*.log
+logs/
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
