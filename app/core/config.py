@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # CORS — 프론트 개발 서버 주소를 쉼표로 구분해 넣는다
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
+    # JWT — 운영 환경에서는 반드시 .env 로 덮어쓴다
+    JWT_SECRET_KEY: str = "dev-only-secret-do-not-use-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    # 액세스 토큰 만료(분). API명세서 1.3의 expires_in(3600초)과 맞춰 60분.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    # 리프레시 토큰 만료(일)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 14
+
     @property
     def database_url(self) -> str:
         return (
