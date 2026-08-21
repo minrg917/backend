@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import UnauthorizedError
-from app.core.security import TokenType, decode_token
+from app.core.security import InactiveUser, TokenType, decode_token
 from app.db.session import get_db
 from app.models.user import User
 
@@ -20,11 +20,6 @@ DbSession = Annotated[Session, Depends(get_db)]
 class AuthenticationRequired(UnauthorizedError):
     error_code = "AUTHENTICATION_REQUIRED"
     message = "인증이 필요합니다. Authorization 헤더를 확인해주세요."
-
-
-class InactiveUser(UnauthorizedError):
-    error_code = "INACTIVE_USER"
-    message = "탈퇴했거나 비활성화된 계정입니다."
 
 
 def get_current_user(

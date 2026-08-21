@@ -47,7 +47,10 @@ def test_refresh_token_cannot_be_used_as_access_token() -> None:
 
 def test_tampered_token_is_rejected() -> None:
     issued = create_access_token(user_id=1)
-    tampered = issued.token[:-1] + ("a" if issued.token[-1] != "a" else "b")
+    header, payload, signature = issued.token.split(".")
+    # 서명의 마지막 글자는 base64url 패딩 비트라 바꿔도 디코딩 결과가 같을 수 있다.
+    # 6비트를 온전히 담는 첫 글자를 바꿔야 서명이 반드시 달라진다.
+    tampered = f"{header}.{payload}.{'a' if signature[0] != 'a' else 'b'}{signature[1:]}"
 
     with pytest.raises(UnauthorizedError) as exc_info:
         decode_token(tampered, TokenType.ACCESS)
