@@ -12,6 +12,7 @@ from app.schemas.common import MessageResponse
 from app.schemas.store import (
     ImportStatusResponse,
     InsightListResponse,
+    LogoUploadResponse,
     MenuCreateRequest,
     MenuCreateResponse,
     MenuListResponse,
@@ -24,6 +25,8 @@ from app.schemas.store import (
     StoreCreateResponse,
     StoreDetailResponse,
     StoreSearchResponse,
+    StoreShortItem,
+    StoreShortListResponse,
     StoreUpdateRequest,
     StoreUpdateResponse,
     TargetCustomerCreateRequest,
@@ -38,9 +41,12 @@ from app.services import store_menu as menu_service
 from app.services import store_photo as photo_service
 from app.services import store_search
 from app.services import store_target_customer as target_service
+from app.services import video_output as output_service
 from app.storage import Storage, get_storage, to_public_url
 
 router = APIRouter(prefix="/stores", tags=["stores"])
+
+StorageDep = Annotated[Storage, Depends(get_storage)]
 
 _ResponseT = TypeVar("_ResponseT", bound=BaseModel)
 
@@ -107,10 +113,18 @@ def get_import_status(store_id: int, user: CurrentUser, db: DbSession) -> Import
 
 
 @router.get("/{store_id}", response_model=StoreDetailResponse)
-def get_store(store_id: int, user: CurrentUser, db: DbSession) -> StoreDetailResponse:
-    """가게 기본정보와 브랜드톤을 돌려준다."""
+def get_store(
+    store_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> StoreDetailResponse:
+    """가게 기본정보와 브랜드톤을 돌려준다.
+
+    `logo_url`은 3.6으로 올린 파일이면 저장소 키가 들어 있어 전체 URL로 바꿔서
+    내보낸다. 검색으로 가져온 외부 URL은 `to_public_url`이 그대로 통과시킨다.
+    """
     store = store_service.get_owned_store(db, user, store_id)
-    return StoreDetailResponse.model_validate(store)
+    response = StoreDetailResponse.model_validate(store)
+    response.logo_url = to_public_url(storage, store.logo_url)
+    return response
 
 
 @router.patch("/{store_id}", response_model=StoreUpdateResponse, response_model_exclude_unset=True)
@@ -229,8 +243,6 @@ def list_insights(
 
 # ---------------------------------------------------------------- 3.3 가게사진
 
-StorageDep = Annotated[Storage, Depends(get_storage)]
-
 
 def _photo_response(storage: Storage, photo: object) -> PhotoResponse:
     """DB에는 저장소 키가 들어있으므로 응답에서 전체 URL로 바꿔 내보낸다."""
@@ -282,3 +294,67 @@ def delete_photo(
     store = store_service.get_owned_store(db, user, store_id)
     photo_service.delete_photo(db, storage, photo_service.get_photo(db, store, photo_id))
     return MessageResponse(message="사진이 삭제되었습니다.")
+
+
+# ---------------------------------------------------------------- 3.6 가게 로고 업로드
+
+
+@router.post("/{store_id}/logo", response_model=LogoUploadResponse)
+def upload_logo(
+    store_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
+    file: Annotated[UploadFile, File(description="로고 이미지 파일")],
+) -> LogoUploadResponse:
+    """가게 로고를 업로드한다.
+
+    로고는 파일이라 `multipart/form-data`가 필요하고 `PATCH /stores/{storeId}`(3.1)는
+    JSON 부분수정이라, 3.3(가게사진)·9.2(촬영본)와 같이 별도 엔드포인트로 뒀다.
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    store = store_service.upload_logo(db, storage, store, file)
+    return LogoUploadResponse(
+        store_id=store.id,
+        logo_url=to_public_url(storage, store.logo_url),
+        updated_at=store.updated_at,
+    )
+
+
+# ---------------------------------------------------------------- 15.2 완성 숏폼 목록
+
+
+@router.get("/{store_id}/shorts", response_model=StoreShortListResponse)
+def list_store_shorts(
+    store_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
+    page: Annotated[int, Query(ge=1, description="페이지 번호(1부터)")] = 1,
+    size: Annotated[int, Query(ge=1, le=100, description="페이지 크기")] = 20,
+) -> StoreShortListResponse:
+    """마이페이지의 완성 숏폼 그리드 목록.
+
+    **완성된 영상만** 최신순으로, 프로젝트당 1개씩 준다. 제작 중인 프로젝트까지
+    보려면 4.1 `GET /shorts-projects`를 쓴다.
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    rows, total = output_service.list_store_shorts(db, store, page, size)
+    return StoreShortListResponse(
+        items=[
+            StoreShortItem(
+                video_output_id=output.id,
+                shorts_project_id=project.id,
+                promotion_purpose=project.promotion_purpose,
+                video_url=to_public_url(storage, output.video_url),
+                cover_image_url=to_public_url(storage, output.cover_image_url),
+                duration_sec=duration,
+                is_posted=is_posted,
+                created_at=output.created_at,
+            )
+            for output, project, duration, is_posted in rows
+        ],
+        page=page,
+        size=size,
+        total=total,
+    )

@@ -403,3 +403,32 @@ class EditReviseResponse(BaseSchema):
     render_status: RenderStatus
     # 프로젝트 내 산출물 순번 — 저장하지 않고 계산한다
     revision_id: int
+
+
+# ---------------------------------------------------------------- 15.1 최종 출력·게시자료
+
+
+class OutputCreateRequest(BaseSchema):
+    target_platforms: list[str] = Field(min_length=1)
+
+
+class OutputItem(BaseSchema):
+    id: int
+    target_platform: str | None
+    resolution: str | None
+    has_licensed_audio: bool | None
+    render_status: RenderStatus
+    video_url: str | None
+    cover_image_url: str | None
+
+
+class PublishKit(BaseSchema):
+    caption: str
+    hashtags: list[str]
+    post_note: str | None = None
+
+
+class OutputListResponse(BaseSchema):
+    outputs: list[OutputItem]
+    # 아직 15.1 POST를 호출하지 않았으면 null이다
+    publish_kit: PublishKit | None

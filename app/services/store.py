@@ -1,8 +1,12 @@
 """가게 등록·조회 로직 (API명세서 2.2, 2.3)."""
 
+import uuid
+
+from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.models.store import Store
 from app.models.store_insight import StoreInsight
@@ -16,6 +20,16 @@ from app.schemas.store import (
     StoreCreateRequest,
     StoreUpdateRequest,
 )
+from app.services import store_photo as photo_service
+from app.storage import Storage
+
+# content_type -> 확장자. 원본 파일명을 믿지 않고 여기서 정한다(3.3과 같은 규칙).
+LOGO_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+}
 
 
 class StoreNotFound(NotFoundError):
@@ -140,3 +154,37 @@ def summarize_status(statuses: list[ImportItemStatus]) -> ImportItemStatus:
     if all(status is ImportItemStatus.FAILED for status in statuses):
         return ImportItemStatus.FAILED
     return ImportItemStatus.IN_PROGRESS
+
+
+def upload_logo(db: Session, storage: Storage, store: Store, upload: UploadFile) -> Store:
+    """가게 로고를 저장소에 올리고 `stores.logo_url`에 반영한다 (API명세서 3.6).
+
+    **로고는 가게당 1장이다.** 사진(3.3)처럼 목록을 갖지 않으므로 새로 올리면 이전
+    파일을 지운다. 파일명에 UUID를 넣어 매번 키가 달라지게 하는 이유는, 같은 키를
+    덮어쓰면 CDN·클라이언트 캐시 때문에 예전 이미지가 계속 보일 수 있어서다.
+
+    DB를 먼저 커밋하고 이전 파일을 나중에 지운다(3.3 삭제와 같은 순서) — 파일 삭제가
+    실패해도 사장님에겐 새 로고가 보여야 하고, 남은 건 어디서도 참조되지 않는
+    고아 파일이라 나중에 정리할 수 있다.
+    """
+    extension = photo_service.validate_upload(
+        upload,
+        allowed_types=settings.allowed_image_type_set,
+        extensions=LOGO_EXTENSIONS,
+        max_bytes=settings.max_upload_size_bytes,
+        limit_mb=settings.MAX_UPLOAD_SIZE_MB,
+        unsupported_message="지원하지 않는 파일 형식입니다. 이미지 파일만 업로드할 수 있습니다.",
+    )
+
+    previous = store.logo_url
+    key = f"stores/{store.id}/logo/{uuid.uuid4().hex}{extension}"
+    storage.save(key, upload.file, upload.content_type)
+
+    store.logo_url = key
+    db.commit()
+    db.refresh(store)
+
+    # 외부 URL(검색으로 가져온 로고)은 우리 저장소 파일이 아니라 지울 대상이 아니다.
+    if previous and not previous.startswith(("http://", "https://")):
+        storage.delete(previous)
+    return store

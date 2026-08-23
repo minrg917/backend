@@ -90,6 +90,14 @@ def get_owned_project(db: Session, owner: User, project_id: int) -> ShortsProjec
     return project
 
 
+def get_project_store(db: Session, project: ShortsProject) -> Store:
+    """프로젝트가 속한 가게. 소유권은 `get_owned_project`에서 이미 확인한 뒤 부른다."""
+    store = db.get(Store, project.store_id)
+    if store is None:
+        raise ProjectNotFound
+    return store
+
+
 def _validate_promotion_detail(purpose: PromotionPurpose, detail: dict[str, Any]) -> dict[str, Any]:
     """저장된 홍보 목적에 맞는 스키마로 상세 정보를 검증한다.
 

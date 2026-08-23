@@ -302,3 +302,35 @@ class PhotoResponse(BaseSchema):
 
 class PhotoListResponse(BaseSchema):
     photos: list[PhotoResponse]
+
+
+# ---------------------------------------------------------------- 3.6 가게 로고
+
+
+class LogoUploadResponse(BaseSchema):
+    store_id: int
+    logo_url: str
+    updated_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 15.2 완성 숏폼 목록
+
+
+class StoreShortItem(BaseSchema):
+    video_output_id: int
+    shorts_project_id: int
+    # 프로젝트에는 제목 컬럼이 없다 — 4.1 목록과 같이 홍보 목적을 카드 라벨로 쓴다
+    promotion_purpose: str | None
+    video_url: str | None
+    cover_image_url: str | None
+    # 포맷의 완성 영상 길이에서 온다 — video_outputs에는 길이 컬럼이 없다
+    duration_sec: int | None
+    is_posted: bool
+    created_at: UtcDatetime
+
+
+class StoreShortListResponse(BaseSchema):
+    items: list[StoreShortItem]
+    page: int
+    size: int
+    total: int
