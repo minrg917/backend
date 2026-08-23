@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     MEDIA_URL_PATH: str = "/media"
     MEDIA_BASE_URL: str = "http://localhost:8000"
 
+    # S3 (STORAGE_BACKEND=s3 일 때만 사용)
+    # 자격증명은 여기 두지 않는다 — EC2에 IAM 역할을 붙이면 boto3가 알아서 찾는다.
+    S3_BUCKET: str = ""
+    S3_REGION: str = "ap-northeast-2"
+    # CloudFront나 커스텀 도메인을 쓸 때만. 비우면 S3 기본 주소를 쓴다.
+    S3_PUBLIC_BASE_URL: str = ""
+    # 0보다 크면 그 초만큼 유효한 **서명 URL**을 발급한다(버킷을 비공개로 둘 수 있다).
+    # 0이면 공개 URL — 버킷이 공개 읽기여야 열린다. 자세한 판단 근거는 docs/DEPLOY.md 참고.
+    S3_PRESIGN_EXPIRE_SECONDS: int = 0
+
     # 업로드 제한 — 사진은 원본을 그대로 받되 상식적인 상한을 둔다
     MAX_UPLOAD_SIZE_MB: int = 10
     ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png,image/webp,image/heic"
