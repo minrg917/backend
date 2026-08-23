@@ -364,3 +364,25 @@ def test_kakao_document_is_parsed_into_result() -> None:
     assert parsed.latitude == Decimal("37.4995678")
     assert parsed.distance_m == 120
     assert parsed.external_channel_url == "https://place.map.kakao.com/98765"
+
+
+def test_coordinates_are_serialized_as_numbers(
+    client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """좌표는 문자열이 아니라 숫자로 나가야 한다.
+
+    Pydantic은 Decimal을 기본적으로 문자열로 직렬화한다. 프론트가 값을 그대로 지도
+    SDK에 넘기므로 명세서 예시(37.4995)대로 숫자여야 한다.
+    """
+
+    async def fake_search(keyword: str, latitude: Any = None, longitude: Any = None) -> list:
+        return [_result(latitude=Decimal("37.4995000"), longitude=Decimal("127.0312000"))]
+
+    monkeypatch.setattr("app.api.routers.stores.store_search.search_stores", fake_search)
+
+    response = client.get("/stores/search", params={"keyword": "행복분식"}, headers=auth_headers)
+
+    first = response.json()["results"][0]
+    assert isinstance(first["latitude"], float)
+    assert isinstance(first["longitude"], float)
+    assert first["latitude"] == 37.4995

@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from app.schemas.common import BaseSchema, UtcDatetime
+from app.schemas.common import BaseSchema, Coordinate, UtcDatetime
 
 
 class SearchSource(StrEnum):
@@ -30,8 +30,8 @@ class StoreSearchResult(BaseSchema):
     name: str
     address: str | None = None
     phone: str | None = None
-    latitude: Decimal | None = None
-    longitude: Decimal | None = None
+    latitude: Coordinate | None = None
+    longitude: Coordinate | None = None
     category: str | None = None
     # 요청에 기준 좌표(latitude/longitude)가 없으면 계산할 수 없어 null로 나간다.
     # 키를 빼지 않고 null로 두는 건 프론트가 키 존재 여부로 분기하지 않게 하기 위함이다.
