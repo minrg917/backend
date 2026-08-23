@@ -214,6 +214,11 @@ class PublishKit:
     caption: str
     hashtags: list[str]
     post_note: str | None = None
+    # 음원 가이드. 저작권 때문에 배경음악을 직접 입히지 않고, 사장님이 플랫폼에서
+    # 붙이도록 "무슨 곡을 어디부터" 알려준다(2026-08-24 결정).
+    # 값의 출처는 미정이다 — 포맷에 고정해둘지 AI가 영상을 보고 채울지 확인 중이라
+    # 지금은 항상 None이며, 정해지면 이 자리에 담는다.
+    track: dict[str, Any] | None = None
     is_placeholder: bool = False
 
 

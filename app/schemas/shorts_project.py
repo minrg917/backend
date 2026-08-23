@@ -422,10 +422,46 @@ class OutputItem(BaseSchema):
     cover_image_url: str | None
 
 
+class AudioMode(StrEnum):
+    """음원이 포맷에 고정돼 있는지 여부.
+
+    챌린지형(`FIXED`)은 그 곡이 곧 챌린지의 정체성이라 바꾸면 안 된다.
+    일반형(`SUGGESTED`)은 분위기만 맞으면 사장님이 자유롭게 고른다.
+    """
+
+    FIXED = "FIXED"
+    SUGGESTED = "SUGGESTED"
+
+
+class TrackInfo(BaseSchema):
+    """음원 가이드 (API명세서 15.1).
+
+    **저작권 때문에 배경음악을 영상에 직접 입히지 않는다**(2026-08-24 결정). 플랫폼
+    음원 라이선스는 그 플랫폼 안에서만 유효하기 때문이다. 대신 사장님이 인스타그램·
+    틱톡에서 직접 붙이도록 "무슨 곡을, 어디부터" 알려주는 게 이 필드다.
+
+    `start_sec`은 **원곡에서의 위치**다. 원곡 3분 중 챌린지가 쓰는 건 후렴 15초라,
+    사장님이 슬라이더를 그 지점으로 밀지 않으면 인트로만 깔려 전혀 다른 영상이 된다.
+    """
+
+    mode: AudioMode
+    # FIXED에서만 채워진다. 사장님이 플랫폼에서 검색할 값이라 지어내면 안 된다.
+    title: str | None = None
+    artist: str | None = None
+    start_sec: int | None = None
+    # 저장하지 않고 start_sec + 포맷의 완성 영상 길이로 계산한다 —
+    # 두 값을 따로 저장하면 어긋났을 때 어느 쪽이 맞는지 알 수 없다.
+    end_sec: int | None = None
+    # SUGGESTED에서만 채워진다. 예: "잔잔하고 따뜻한 어쿠스틱"
+    mood: str | None = None
+
+
 class PublishKit(BaseSchema):
     caption: str
     hashtags: list[str]
     post_note: str | None = None
+    # 포맷에 음원 정보가 없으면 null이다. 프론트는 이때 음원 카드를 숨긴다.
+    track: TrackInfo | None = None
 
 
 class OutputListResponse(BaseSchema):

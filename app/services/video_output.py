@@ -63,6 +63,8 @@ def create_outputs(
         "caption": kit.caption,
         "hashtags": kit.hashtags,
         "post_note": kit.post_note,
+        # 음원 가이드. 값의 출처(포맷 고정 vs AI 생성)가 정해지기 전까지 None이다.
+        "track": kit.track,
     }
 
     # 새 산출물이 없어도 publish_kit은 매번 다시 만들어 저장하므로 커밋은 항상 필요하다.
