@@ -96,6 +96,12 @@ class ShortsProject(Base, TimestampMixin):
     )
 
     # 9.3 자동저장·이어하기. 앱이 맡겨두는 값이라 서버는 내용을 해석하지 않는다.
+    # 15.1 게시자료(캡션·해시태그·post_note). ERD 원문에는 없던 컬럼 —
+    # sns_posts.post_caption은 "이미 게시한 글"이라 게시 전 초안을 담을 자리가 없었다.
+    # 7.1 AI 기획 결과(estimated_shooting_sec 등)와 같은 방식으로 프로젝트에 붙인다.
+    publish_kit: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="게시자료(캡션/해시태그/post_note) - 15.1 AI 생성 결과"
+    )
     current_step: Mapped[str | None] = mapped_column(String(30), nullable=True, comment="진행 단계")
     client_state: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="앱 복원용 상태")
     # `updated_at`은 태스크 상태 변경 등으로도 갱신돼 "마지막 임시저장 시각"과 다르다.

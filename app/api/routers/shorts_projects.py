@@ -3,7 +3,7 @@
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import CurrentUser, DbSession
 from app.models.shorts_project import ShortsStatus
@@ -14,6 +14,9 @@ from app.schemas.shorts_project import (
     EditResultResponse,
     EditStartRequest,
     EditStartResponse,
+    OutputCreateRequest,
+    OutputItem,
+    OutputListResponse,
     PlanCreateRequest,
     PlanResponse,
     ProjectCreateRequest,
@@ -22,6 +25,7 @@ from app.schemas.shorts_project import (
     ProjectListResponse,
     ProjectSettingsResponse,
     ProjectUpdateRequest,
+    PublishKit,
     SceneListResponse,
     ScenePreview,
     SceneResponse,
@@ -35,6 +39,8 @@ from app.services import plan as plan_service
 from app.services import shooting_task as task_service
 from app.services import shorts_project as project_service
 from app.services import video_edit as edit_service
+from app.services import video_output as output_service
+from app.storage import Storage, get_storage, to_public_url
 
 router = APIRouter(prefix="/shorts-projects", tags=["shorts-projects"])
 
@@ -213,3 +219,65 @@ def get_edit_result(project_id: int, user: CurrentUser, db: DbSession) -> EditRe
         preview_video_url=output.video_url,
         timeline_summary=edit_service.build_timeline(db, project),
     )
+
+
+# ---------------------------------------------------------------- 15.1 최종 출력·게시자료
+
+StorageDep = Annotated[Storage, Depends(get_storage)]
+
+
+def _output_list(storage: Storage, outputs: list, publish_kit: dict | None) -> OutputListResponse:
+    """15.1의 POST·GET이 같은 응답 구성을 쓴다(2026-08-21 확정)."""
+    return OutputListResponse(
+        outputs=[
+            OutputItem(
+                id=output.id,
+                target_platform=output.target_platform,
+                resolution=output.resolution,
+                has_licensed_audio=output.has_licensed_audio,
+                render_status=output.render_status,
+                video_url=to_public_url(storage, output.video_url),
+                cover_image_url=to_public_url(storage, output.cover_image_url),
+            )
+            for output in outputs
+        ],
+        publish_kit=PublishKit(**publish_kit) if publish_kit else None,
+    )
+
+
+@router.post("/{project_id}/outputs", response_model=OutputListResponse)
+def create_outputs(
+    project_id: int,
+    payload: OutputCreateRequest,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
+) -> OutputListResponse:
+    """플랫폼별 최종 출력물과 게시자료(캡션·해시태그)를 만든다.
+
+    **편집(14.1)을 먼저 시작해야 한다** — 최종 출력은 편집 결과를 플랫폼 규격으로
+    내보내는 단계라 원본이 없으면 만들 게 없다(400 `EDIT_NOT_STARTED`).
+
+    같은 플랫폼을 다시 요청하면 산출물을 새로 쌓지 않고 기존 것을 돌려준다.
+    게시자료는 호출할 때마다 다시 만든다.
+    """
+    project = project_service.get_owned_project(db, user, project_id)
+    store = project_service.get_project_store(db, project)
+    outputs, publish_kit = output_service.create_outputs(
+        db, store, project, payload.target_platforms
+    )
+    return _output_list(storage, outputs, publish_kit)
+
+
+@router.get("/{project_id}/outputs", response_model=OutputListResponse)
+def get_outputs(
+    project_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> OutputListResponse:
+    """만들어둔 출력물과 게시자료를 돌려준다.
+
+    렌더링이 비동기라 화면을 나갔다 돌아왔을 때 재조회용으로 쓴다. 플랫폼별
+    최신 1개씩 준다. 아직 15.1 POST를 부르지 않았으면 `publish_kit`은 `null`이다.
+    """
+    project = project_service.get_owned_project(db, user, project_id)
+    outputs, publish_kit = output_service.get_outputs(db, project)
+    return _output_list(storage, outputs, publish_kit)

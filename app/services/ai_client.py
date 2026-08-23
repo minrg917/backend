@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.config import settings
+from app.models.shorts_project import ShortsProject
 from app.models.store import Store
 from app.models.video_format import VideoFormat
 
@@ -198,5 +199,50 @@ def _placeholder_recipe(target_platform: str, revision_action: str | None) -> Ed
         # 플랫폼별 규격. 숏폼은 9:16이 표준이다.
         resolution="1080x1920",
         has_licensed_audio=False,
+        is_placeholder=True,
+    )
+
+
+@dataclass(frozen=True)
+class PublishKit:
+    """게시자료 (API명세서 15.1).
+
+    사장님이 SNS에 올릴 때 그대로 붙여넣을 캡션·해시태그와, 음원 선택 같은
+    플랫폼 안내 문구를 담는다.
+    """
+
+    caption: str
+    hashtags: list[str]
+    post_note: str | None = None
+    is_placeholder: bool = False
+
+
+def generate_publish_kit(store: Store, project: ShortsProject) -> PublishKit:
+    """게시자료를 만든다.
+
+    가게 정보와 프로젝트의 홍보 목적을 근거로 캡션·해시태그를 생성한다.
+    AI 서버가 설정돼 있지 않으면 임시 게시자료를 돌려준다.
+    """
+    if not is_enabled():
+        return _placeholder_publish_kit(store)
+
+    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+
+
+def _placeholder_publish_kit(store: Store) -> PublishKit:
+    """AI 연동 전 임시 게시자료.
+
+    **문구를 지어내지 않는다.** 가게 이름·업종처럼 DB에 실제로 있는 값만 쓴다 —
+    사장님이 그대로 게시할 수 있는 화면에 나가는 값이라, 사실이 아닌 문장을
+    넣으면 잘못된 정보가 그대로 올라갈 수 있다.
+    """
+    hashtags = [f"#{store.name.replace(' ', '')}"]
+    if store.category:
+        hashtags.append(f"#{store.category.replace(' ', '')}")
+
+    return PublishKit(
+        caption=f"{store.name}",
+        hashtags=hashtags,
+        post_note="AI 연동 전 임시 게시자료입니다. 캡션을 직접 수정해주세요.",
         is_placeholder=True,
     )
