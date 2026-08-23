@@ -18,7 +18,7 @@ from app.db.session import Base, get_db
 from app.main import app as fastapi_app
 
 # 모델을 임포트해야 Base.metadata에 테이블이 등록된다.
-from app.models import User  # noqa: F401
+from app.models import Store, User  # noqa: F401
 
 
 @pytest.fixture
@@ -52,3 +52,28 @@ def _client_for(app: FastAPI, db_session: Session) -> Generator[TestClient, None
             yield test_client
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture
+def auth_headers(client: TestClient) -> dict[str, str]:
+    """회원가입 + 로그인까지 마친 사용자의 인증 헤더.
+
+    인증이 필요한 API를 테스트할 때 `headers=auth_headers`로 넘긴다.
+    """
+    signup = client.post(
+        "/auth/signup",
+        json={
+            "email": "owner@example.com",
+            "password": "sarils1234!",
+            "name": "김사장",
+            "terms_agreed": True,
+        },
+    )
+    assert signup.status_code == 201, signup.text
+
+    login = client.post(
+        "/auth/login",
+        json={"email": "owner@example.com", "password": "sarils1234!"},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
