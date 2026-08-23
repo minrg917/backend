@@ -10,6 +10,7 @@ from app.models.store_insight import StoreInsight
 from app.models.store_menu import StoreMenu
 from app.models.store_photo import StorePhoto
 from app.models.store_target_customer import StoreTargetCustomer, TargetStatus
+from app.models.storyboard_scene import StoryboardScene
 from app.models.user import User
 from app.models.video_format import VideoFormat
 
@@ -23,6 +24,7 @@ __all__ = [
     "StoreMenu",
     "StorePhoto",
     "StoreTargetCustomer",
+    "StoryboardScene",
     "TargetStatus",
     "User",
     "VideoFormat",

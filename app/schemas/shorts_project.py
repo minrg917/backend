@@ -175,3 +175,82 @@ class ProjectDetailResponse(BaseSchema):
     shorts_status: ShortsStatus
     created_at: UtcDatetime
     updated_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 7.1 기획 생성
+
+
+class PlanCreateRequest(BaseSchema):
+    video_format_id: int
+
+
+class ShootingSummary(BaseSchema):
+    """촬영 준비 요약 (기능명세서 S07.5.1, `#/project/:id/prep` 화면).
+
+    ⚠️ `expected_duration_sec`은 **예상 촬영 소요시간**이다. 5.1·5.2의 같은 이름
+    필드(**완성 영상 길이**)와 뜻이 다르다. DB에는 `estimated_shooting_sec`으로
+    구분해 저장하며 여기서만 명세서 필드명에 맞춘다.
+    """
+
+    expected_duration_sec: int | None
+    required_people: int | None
+    props: list[str]
+    difficulty: str | None
+
+
+class ScenePreview(BaseSchema):
+    """7.1 응답의 장면 미리보기.
+
+    `#/project/:id/plan`에서 대사를 바로 확인·수정할 수 있어야 해서 `id`와
+    `scene_dialogue`를 포함한다. 자막은 콘티 화면(7.2) 몫이라 제외한다.
+    """
+
+    id: int
+    scene_order: int
+    scene_description: str | None
+    scene_dialogue: str | None
+    target_duration_sec: int | None
+
+
+class PlanResponse(BaseSchema):
+    shooting_summary: ShootingSummary
+    scenes_preview: list[ScenePreview]
+
+
+# ---------------------------------------------------------------- 7.2 콘티
+
+
+class SceneResponse(BaseSchema):
+    id: int
+    scene_order: int
+    scene_description: str | None
+    scene_dialogue: str | None
+    scene_subtitle: str | None
+    shot_type: str | None
+    target_duration_sec: int | None
+
+
+class SceneListResponse(BaseSchema):
+    # 7.1을 호출한 적 없으면 null이다
+    shooting_summary: ShootingSummary | None
+    scenes: list[SceneResponse]
+
+
+class SceneUpdateItem(BaseSchema):
+    """수정할 장면 하나. `id` 외에는 보낸 필드만 반영된다."""
+
+    id: int
+    scene_description: str | None = None
+    scene_dialogue: str | None = None
+    scene_subtitle: str | None = None
+    shot_type: str | None = Field(default=None, max_length=50)
+    target_duration_sec: int | None = Field(default=None, ge=0)
+
+
+class SceneUpdateRequest(BaseSchema):
+    scenes: list[SceneUpdateItem] = Field(min_length=1)
+
+
+class SceneUpdateResponse(BaseSchema):
+    message: str
+    updated_count: int
