@@ -10,6 +10,7 @@ from app.api.routers import (
     health,
     onboarding,
     shorts_projects,
+    sns_posts,
     stores,
     tasks,
     users,
@@ -27,3 +28,4 @@ api_router.include_router(video_formats.router)
 api_router.include_router(tasks.router)
 api_router.include_router(video_outputs.router)
 api_router.include_router(users.router)
+api_router.include_router(sns_posts.router)
