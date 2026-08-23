@@ -8,6 +8,9 @@ from fastapi import APIRouter, Query
 from app.api.deps import CurrentUser, DbSession
 from app.models.shorts_project import ShortsStatus
 from app.schemas.shorts_project import (
+    DraftResponse,
+    DraftSaveRequest,
+    DraftSaveResponse,
     PlanCreateRequest,
     PlanResponse,
     ProjectCreateRequest,
@@ -24,6 +27,7 @@ from app.schemas.shorts_project import (
     TaskBoardResponse,
     TaskSummary,
 )
+from app.services import draft as draft_service
 from app.services import plan as plan_service
 from app.services import shooting_task as task_service
 from app.services import shorts_project as project_service
@@ -141,3 +145,32 @@ def list_tasks(project_id: int, user: CurrentUser, db: DbSession) -> TaskBoardRe
         estimated_remaining_min=task_service.estimate_remaining_min(project, tasks),
         tasks=[TaskSummary.model_validate(task) for task in tasks],
     )
+
+
+# ---------------------------------------------------------------- 9.3 자동저장
+
+
+@router.get("/{project_id}/draft", response_model=DraftResponse)
+def get_draft(project_id: int, user: CurrentUser, db: DbSession) -> DraftResponse:
+    """임시저장 상태를 돌려준다. 저장한 적 없으면 값이 `null`이다."""
+    project = project_service.get_owned_project(db, user, project_id)
+    # 모델은 `id`, 응답은 `project_id`라 model_validate로는 매핑되지 않는다.
+    return DraftResponse(
+        project_id=project.id,
+        last_saved_at=project.last_saved_at,
+        current_step=project.current_step,
+    )
+
+
+@router.put("/{project_id}/draft", response_model=DraftSaveResponse)
+def save_draft(
+    project_id: int, payload: DraftSaveRequest, user: CurrentUser, db: DbSession
+) -> DraftSaveResponse:
+    """진행 위치를 임시저장한다.
+
+    실제 데이터(촬영본·대사·설정·태스크 상태)는 각각의 API로 이미 저장되므로,
+    여기서 다루는 건 "어디까지 봤는지"뿐이다.
+    """
+    project = project_service.get_owned_project(db, user, project_id)
+    project = draft_service.save_draft(db, project, payload)
+    return DraftSaveResponse(message="임시저장 되었습니다.", last_saved_at=project.last_saved_at)

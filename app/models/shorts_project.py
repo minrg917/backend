@@ -1,9 +1,10 @@
 """숏폼 프로젝트 모델 (`docs/ERD.sql`의 `store_shorts_projects`)."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -92,6 +93,14 @@ class ShortsProject(Base, TimestampMixin):
     props: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, comment="필요 소품 목록")
     shooting_difficulty: Mapped[str | None] = mapped_column(
         String(20), nullable=True, comment="촬영 난이도"
+    )
+
+    # 9.3 자동저장·이어하기. 앱이 맡겨두는 값이라 서버는 내용을 해석하지 않는다.
+    current_step: Mapped[str | None] = mapped_column(String(30), nullable=True, comment="진행 단계")
+    client_state: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="앱 복원용 상태")
+    # `updated_at`은 태스크 상태 변경 등으로도 갱신돼 "마지막 임시저장 시각"과 다르다.
+    last_saved_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, comment="마지막 임시저장 시각(UTC)"
     )
 
     shorts_status: Mapped[ShortsStatus] = mapped_column(

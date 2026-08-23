@@ -69,6 +69,7 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
             task_title=task.task_title,
             task_status=TaskStatus.NOT_STARTED,
             display_order=task.display_order,
+            guide=task.guide,
         )
         for task in plan.tasks
     )

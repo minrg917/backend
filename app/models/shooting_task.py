@@ -11,7 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import DECIMAL, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import DECIMAL, JSON, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -96,6 +96,12 @@ class ShootingTask(Base):
     )
     ai_evaluated_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, comment="AI 평가 수행 시각(UTC)"
+    )
+    # 촬영 안내. 7.1이 태스크와 함께 저장하고 9.1이 조합해 내려준다.
+    # AI 응답 형식이 확정 전이라 컬럼을 쪼개지 않고 JSON으로 둔다.
+    # `broll_shot.shot_type`은 여기 넣지 않는다 — `storyboard_scenes.shot_type`에 이미 있다.
+    guide: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True, comment="촬영 안내(guide_type/instructions/broll_shot)"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
