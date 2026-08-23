@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -81,6 +81,19 @@ class ShortsProject(Base, TimestampMixin):
     shooting_condition: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="촬영 조건(촬영자 유무, 가능 시간 등)"
     )
+    # 7.1 AI 기획 결과의 촬영 준비 요약. AI가 만든 값이라 재계산할 수 없어 저장한다
+    # (`#/project/:id/prep` 화면을 다시 열 때 필요).
+    # ⚠️ `estimated_shooting_sec`은 **예상 촬영 소요시간**이다. `video_formats`의
+    # `expected_duration_sec`(완성 영상 길이)와 이름이 비슷하지만 뜻이 다르다.
+    estimated_shooting_sec: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="예상 촬영 소요시간(초)"
+    )
+    required_people: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="필요 인원")
+    props: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, comment="필요 소품 목록")
+    shooting_difficulty: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="촬영 난이도"
+    )
+
     shorts_status: Mapped[ShortsStatus] = mapped_column(
         Enum(ShortsStatus, native_enum=False, length=20),
         default=ShortsStatus.DRAFT,

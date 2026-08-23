@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # 외부 API 호출 타임아웃(초). 한쪽이 느려도 검색 전체가 지연되지 않게 짧게 잡는다.
     EXTERNAL_API_TIMEOUT_SECONDS: float = 3.0
 
+    # AI 서버 — 스펙 미확정. 비어 있으면 기획 생성이 임시 뼈대를 돌려준다.
+    AI_SERVER_URL: str = ""
+    AI_SERVER_API_KEY: str = ""
+    AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+
     # 파일 저장소 — 배포 시 "s3" 구현을 추가하고 이 값만 바꾼다
     STORAGE_BACKEND: str = "local"
     # 로컬 저장 루트(.gitignore에 포함). 상대 경로면 프로젝트 루트 기준.
