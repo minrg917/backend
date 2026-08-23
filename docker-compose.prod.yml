@@ -1,0 +1,48 @@
+# 운영(EC2)용 구성. 로컬 개발용 docker-compose.yml과 달리 MySQL을 띄우지 않는다 —
+# DB는 RDS를 쓴다.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# .env 파일이 같은 디렉터리에 있어야 한다(.env.example 참고).
+
+services:
+  api:
+    build: .
+    container_name: sarils-api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # nginx가 앞에 붙으므로 외부에 직접 열지 않고 로컬호스트에만 바인딩한다.
+      - "127.0.0.1:8000:8000"
+    # 컨테이너가 죽었다 살아나도 마이그레이션이 먼저 돌게 한다.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: sarils-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+
+  # HTTPS 인증서 발급·갱신. SNS OAuth 리다이렉트가 HTTPS를 요구해서 필수다.
+  certbot:
+    image: certbot/certbot:latest
+    container_name: sarils-certbot
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # 12시간마다 만료가 가까운 인증서를 갱신한다(Let's Encrypt는 90일 만료).
+    entrypoint: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done"
+
+volumes:
+  certbot-conf:
+  certbot-www:
