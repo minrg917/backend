@@ -386,3 +386,41 @@ def test_coordinates_are_serialized_as_numbers(
     assert isinstance(first["latitude"], float)
     assert isinstance(first["longitude"], float)
     assert first["latitude"] == 37.4995
+
+
+def test_merges_when_only_sido_notation_differs() -> None:
+    """출처별 시도 표기가 달라도 도로명·번지가 같으면 병합한다.
+
+    아래 두 주소는 2026-08-23 실제 응답에서 그대로 가져온 것이다.
+    좌표가 없는 후보에서는 주소 비교가 유일한 병합 근거가 된다.
+    """
+    merged = merge_duplicates(
+        [
+            _result(
+                name="스타벅스 강남파이낸스센터점",
+                address="서울특별시 강남구 테헤란로 152 (역삼동)",
+            ),
+            _result(
+                source=SearchSource.KAKAO,
+                name="스타벅스 강남파이낸스센터점",
+                address="서울 강남구 테헤란로 152",
+                external_channel_url="http://place.map.kakao.com/2018390336",
+            ),
+        ]
+    )
+
+    assert len(merged) == 1
+    # NAVER 지역검색은 장소 URL을 주지 않으므로 Kakao 값으로 채워져야 한다
+    assert merged[0].external_channel_url == "http://place.map.kakao.com/2018390336"
+
+
+def test_does_not_merge_same_road_different_building() -> None:
+    """도로명이 같아도 번지가 다르면 다른 가게다."""
+    merged = merge_duplicates(
+        [
+            _result(name="스타벅스", address="서울특별시 강남구 테헤란로 152"),
+            _result(source=SearchSource.KAKAO, name="스타벅스", address="서울 강남구 테헤란로 300"),
+        ]
+    )
+
+    assert len(merged) == 2

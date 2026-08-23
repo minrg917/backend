@@ -22,7 +22,6 @@ from app.schemas.store import SearchSource, StoreSearchResult
 
 logger = logging.getLogger(__name__)
 
-NAVER_LOCAL_URL = "https://openapi.naver.com/v1/search/local.json"
 KAKAO_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 
 # 출처당 가져올 최대 후보 수. NAVER 지역검색은 display 최대가 5다.
@@ -30,6 +29,8 @@ NAVER_DISPLAY = 5
 KAKAO_SIZE = 15
 
 _HTML_TAG = re.compile(r"<[^>]+>")
+# 주소 끝에 붙는 괄호 보조표기 — NAVER는 "... 테헤란로 152 (역삼동)"처럼 법정동을 덧붙인다.
+_PAREN = re.compile(r"\([^)]*\)")
 # 중복 판정용 좌표 오차 — 약 50m. 위경도 0.00045도 ≈ 50m.
 _COORD_TOLERANCE = Decimal("0.00045")
 
@@ -98,12 +99,19 @@ def _parse_kakao(doc: dict) -> StoreSearchResult:
 
 
 async def _fetch_naver(client: httpx.AsyncClient, keyword: str) -> list[StoreSearchResult]:
+    """NAVER 지역검색을 호출한다.
+
+    2026-06-25 NAVER API HUB(NCP)로 이관되면서 인증 방식이 바뀌었다.
+    구방식(`openapi.naver.com` + `X-Naver-Client-Id`/`X-Naver-Client-Secret`)은
+    2026-07-30 이전 발급 키만 2027-06-30까지 쓸 수 있어, 신규 키 기준인
+    NCP API Gateway 헤더를 사용한다. 엔드포인트는 콘솔에서 확인해 설정으로 주입한다.
+    """
     response = await client.get(
-        NAVER_LOCAL_URL,
+        settings.NAVER_SEARCH_LOCAL_URL,
         params={"query": keyword, "display": NAVER_DISPLAY},
         headers={
-            "X-Naver-Client-Id": settings.NAVER_CLIENT_ID,
-            "X-Naver-Client-Secret": settings.NAVER_CLIENT_SECRET,
+            "X-NCP-APIGW-API-KEY-ID": settings.NAVER_API_KEY_ID,
+            "X-NCP-APIGW-API-KEY": settings.NAVER_API_KEY,
         },
     )
     response.raise_for_status()
@@ -139,7 +147,20 @@ def _normalize_name(name: str) -> str:
 def _normalize_address(address: str | None) -> str:
     if not address:
         return ""
-    return re.sub(r"\s+", "", address).lower()
+    return re.sub(r"\s+", "", _PAREN.sub("", address)).lower()
+
+
+def _address_tail(address: str | None) -> str:
+    """주소에서 도로명·번지에 해당하는 뒤쪽 두 토큰만 뽑는다.
+
+    출처마다 시도 표기가 달라(NAVER "서울특별시 강남구 테헤란로 152 (역삼동)" /
+    Kakao "서울 강남구 테헤란로 152") 앞부분을 그대로 비교하면 같은 가게도 어긋난다.
+    실제 응답을 비교해보면 뒤쪽 "테헤란로 152"는 양쪽이 일치하므로 그 부분만 본다.
+    """
+    if not address:
+        return ""
+    tokens = _PAREN.sub("", address).split()
+    return "".join(tokens[-2:]).lower()
 
 
 def _is_same_place(left: StoreSearchResult, right: StoreSearchResult) -> bool:
@@ -156,6 +177,11 @@ def _is_same_place(left: StoreSearchResult, right: StoreSearchResult) -> bool:
     if left_address and right_address:
         # 출처마다 지번/도로명이 섞여 있어 완전 일치를 요구하지 않고 포함 관계로 본다
         if left_address in right_address or right_address in left_address:
+            return True
+        # 시도 표기(서울 / 서울특별시)만 다른 경우가 많아 도로명·번지끼리도 비교한다.
+        # 상호명이 이미 같다는 전제라 도로명·번지가 같으면 같은 가게로 봐도 안전하다.
+        left_tail = _address_tail(left.address)
+        if left_tail and left_tail == _address_tail(right.address):
             return True
 
     if None not in (left.latitude, left.longitude, right.latitude, right.longitude):

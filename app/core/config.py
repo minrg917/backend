@@ -40,8 +40,14 @@ class Settings(BaseSettings):
 
     # 외부 장소 검색 API (2.1 가게 통합검색)
     # 키가 비어 있으면 해당 출처는 검색에서 조용히 제외된다 — 로컬/CI에서 키 없이도 서버가 뜬다.
-    NAVER_CLIENT_ID: str = ""
-    NAVER_CLIENT_SECRET: str = ""
+    #
+    # NAVER 지역검색은 2026-06-25 NAVER API HUB(NCP)로 이관됐고 2026-07-31부로
+    # developers.naver.com 신규 발급이 종료됐다. 그래서 구방식(openapi.naver.com +
+    # X-Naver-Client-Id/Secret)이 아니라 NCP API Gateway 방식을 쓴다.
+    # 엔드포인트는 NCP 콘솔에서 확인한 값을 넣는다(서비스별 경로가 달라 하드코딩하지 않는다).
+    NAVER_SEARCH_LOCAL_URL: str = ""
+    NAVER_API_KEY_ID: str = ""  # X-NCP-APIGW-API-KEY-ID
+    NAVER_API_KEY: str = ""  # X-NCP-APIGW-API-KEY
     KAKAO_REST_API_KEY: str = ""
     # 외부 API 호출 타임아웃(초). 한쪽이 느려도 검색 전체가 지연되지 않게 짧게 잡는다.
     EXTERNAL_API_TIMEOUT_SECONDS: float = 3.0
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
 
     @property
     def naver_search_enabled(self) -> bool:
-        return bool(self.NAVER_CLIENT_ID and self.NAVER_CLIENT_SECRET)
+        return bool(self.NAVER_SEARCH_LOCAL_URL and self.NAVER_API_KEY_ID and self.NAVER_API_KEY)
 
     @property
     def kakao_search_enabled(self) -> bool:
