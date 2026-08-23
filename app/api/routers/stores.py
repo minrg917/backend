@@ -2,21 +2,56 @@
 
 from decimal import Decimal
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession
+from app.schemas.common import MessageResponse
 from app.schemas.store import (
     ImportStatusResponse,
+    InsightListResponse,
+    MenuCreateRequest,
+    MenuCreateResponse,
+    MenuListResponse,
+    MenuUpdateRequest,
+    MenuUpdateResponse,
     StoreCreateRequest,
     StoreCreateResponse,
+    StoreDetailResponse,
     StoreSearchResponse,
+    StoreUpdateRequest,
+    StoreUpdateResponse,
+    TargetCustomerCreateRequest,
+    TargetCustomerCreateResponse,
+    TargetCustomerListResponse,
+    TargetCustomerUpdateRequest,
+    TargetCustomerUpdateResponse,
 )
 from app.services import store as store_service
+from app.services import store_insight as insight_service
+from app.services import store_menu as menu_service
 from app.services import store_search
+from app.services import store_target_customer as target_service
 
 router = APIRouter(prefix="/stores", tags=["stores"])
+
+_ResponseT = TypeVar("_ResponseT", bound=BaseModel)
+
+
+def _changed_only(schema: type[_ResponseT], entity: object, changed: set[str]) -> _ResponseT:
+    """PATCH 응답을 "바꾼 필드 + id + updated_at"으로만 만든다 (API명세서 3.1/3.2/3.4).
+
+    스키마에 없는 요청 필드(예: 메뉴의 `description`처럼 수정은 되지만 응답 예시엔
+    없는 값)는 조용히 무시한다. 응답에 담을 키만 넘겨 생성하므로 라우터의
+    `response_model_exclude_unset=True`가 나머지를 걸러낸다.
+    """
+    data: dict[str, object] = {"id": entity.id, "updated_at": entity.updated_at}
+    data.update(
+        {field: getattr(entity, field) for field in changed if field in schema.model_fields}
+    )
+    return schema(**data)
 
 
 @router.get("/search", response_model=StoreSearchResponse)
@@ -61,3 +96,127 @@ def get_import_status(store_id: int, user: CurrentUser, db: DbSession) -> Import
     """외부데이터 가져오기 진행상태를 항목별로 돌려준다."""
     store = store_service.get_owned_store(db, user, store_id)
     return store_service.get_import_status(db, store)
+
+
+# ---------------------------------------------------------------- 3.1 기본정보 + 브랜드톤
+
+
+@router.get("/{store_id}", response_model=StoreDetailResponse)
+def get_store(store_id: int, user: CurrentUser, db: DbSession) -> StoreDetailResponse:
+    """가게 기본정보와 브랜드톤을 돌려준다."""
+    store = store_service.get_owned_store(db, user, store_id)
+    return StoreDetailResponse.model_validate(store)
+
+
+@router.patch("/{store_id}", response_model=StoreUpdateResponse, response_model_exclude_unset=True)
+def update_store(
+    store_id: int, payload: StoreUpdateRequest, user: CurrentUser, db: DbSession
+) -> StoreUpdateResponse:
+    """가게 정보를 부분 수정한다.
+
+    명세서대로 **바꾼 필드만** 응답에 담는다(`response_model_exclude_unset`).
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    changed = set(payload.model_dump(exclude_unset=True))
+    store = store_service.update_store(db, store, payload)
+    return _changed_only(StoreUpdateResponse, store, changed)
+
+
+# ---------------------------------------------------------------- 3.2 대표메뉴
+
+
+@router.get("/{store_id}/menus", response_model=MenuListResponse)
+def list_menus(store_id: int, user: CurrentUser, db: DbSession) -> MenuListResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    return MenuListResponse(menus=menu_service.list_menus(db, store))
+
+
+@router.post("/{store_id}/menus", response_model=MenuCreateResponse, status_code=HTTPStatus.CREATED)
+def create_menu(
+    store_id: int, payload: MenuCreateRequest, user: CurrentUser, db: DbSession
+) -> MenuCreateResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    return MenuCreateResponse.model_validate(menu_service.create_menu(db, store, payload))
+
+
+@router.patch(
+    "/{store_id}/menus/{menu_id}",
+    response_model=MenuUpdateResponse,
+    response_model_exclude_unset=True,
+)
+def update_menu(
+    store_id: int, menu_id: int, payload: MenuUpdateRequest, user: CurrentUser, db: DbSession
+) -> MenuUpdateResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    menu = menu_service.get_menu(db, store, menu_id)
+    changed = set(payload.model_dump(exclude_unset=True))
+    menu = menu_service.update_menu(db, menu, payload)
+    return _changed_only(MenuUpdateResponse, menu, changed)
+
+
+@router.delete("/{store_id}/menus/{menu_id}", response_model=MessageResponse)
+def delete_menu(store_id: int, menu_id: int, user: CurrentUser, db: DbSession) -> MessageResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    menu_service.delete_menu(db, menu_service.get_menu(db, store, menu_id))
+    return MessageResponse(message="메뉴가 삭제되었습니다.")
+
+
+# ---------------------------------------------------------------- 3.4 타깃고객
+
+
+@router.get("/{store_id}/target-customers", response_model=TargetCustomerListResponse)
+def list_target_customers(
+    store_id: int, user: CurrentUser, db: DbSession
+) -> TargetCustomerListResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    return TargetCustomerListResponse(
+        target_customers=target_service.list_target_customers(db, store)
+    )
+
+
+@router.post(
+    "/{store_id}/target-customers",
+    response_model=TargetCustomerCreateResponse,
+    status_code=HTTPStatus.CREATED,
+)
+def create_target_customer(
+    store_id: int, payload: TargetCustomerCreateRequest, user: CurrentUser, db: DbSession
+) -> TargetCustomerCreateResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    return TargetCustomerCreateResponse.model_validate(
+        target_service.create_target_customer(db, store, payload)
+    )
+
+
+@router.patch(
+    "/{store_id}/target-customers/{target_id}",
+    response_model=TargetCustomerUpdateResponse,
+    response_model_exclude_unset=True,
+)
+def update_target_customer(
+    store_id: int,
+    target_id: int,
+    payload: TargetCustomerUpdateRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> TargetCustomerUpdateResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    target = target_service.get_target_customer(db, store, target_id)
+    changed = set(payload.model_dump(exclude_unset=True))
+    target = target_service.update_target_customer(db, target, payload)
+    return _changed_only(TargetCustomerUpdateResponse, target, changed)
+
+
+# ---------------------------------------------------------------- 3.5 인사이트
+
+
+@router.get("/{store_id}/insights", response_model=InsightListResponse)
+def list_insights(
+    store_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    type: Annotated[str | None, Query(description="인사이트 유형(상권분석/카드뉴스 등)")] = None,
+) -> InsightListResponse:
+    """가게 인사이트를 최신순으로 돌려준다. `type`을 주면 해당 유형만 거른다."""
+    store = store_service.get_owned_store(db, user, store_id)
+    return InsightListResponse(insights=insight_service.list_insights(db, store, type))
