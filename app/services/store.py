@@ -7,6 +7,7 @@ from app.core.exceptions import NotFoundError
 from app.models.store import Store
 from app.models.store_insight import StoreInsight
 from app.models.store_menu import StoreMenu
+from app.models.store_photo import StorePhoto
 from app.models.user import User
 from app.schemas.store import (
     ImportItemStatus,
@@ -77,16 +78,14 @@ def get_import_status(db: Session, store: Store) -> ImportStatusResponse:
     (결정: `docs/IMPLEMENTATION.md` 2026-08-23). 가게가 등록됐다는 것 자체가
     기본정보 수집 완료를 뜻하므로 기본정보는 항상 SUCCESS다.
 
-    메뉴는 `store_menus`, 상권분석은 `store_insights`(유형=상권분석)에 데이터가 있으면
-    SUCCESS다. **사진만 아직 `store_photos` 테이블이 없어 PENDING 고정**이며,
-    사진 업로드(3.3) 작업에서 같은 방식으로 연결한다.
+    메뉴는 `store_menus`, 사진은 `store_photos`, 상권분석은 `store_insights`
+    (유형=상권분석)에 데이터가 있으면 SUCCESS다.
     """
     items = [
         # 가게 레코드가 존재한다는 것 자체가 기본정보 수집 완료를 뜻한다
         ImportStatusItem(field="기본정보", status=ImportItemStatus.SUCCESS),
         ImportStatusItem(field="메뉴", status=_status_of(_has_menu(db, store))),
-        # store_photos 테이블은 아직 없다 — 사진 업로드(3.3) 작업에서 연결한다
-        ImportStatusItem(field="사진", status=ImportItemStatus.PENDING),
+        ImportStatusItem(field="사진", status=_status_of(_has_photo(db, store))),
         ImportStatusItem(field="상권분석", status=_status_of(_has_market_insight(db, store))),
     ]
     return ImportStatusResponse(
@@ -107,6 +106,12 @@ def _status_of(exists: bool) -> ImportItemStatus:
 def _has_menu(db: Session, store: Store) -> bool:
     return (
         db.scalar(select(StoreMenu.id).where(StoreMenu.store_id == store.id).limit(1)) is not None
+    )
+
+
+def _has_photo(db: Session, store: Store) -> bool:
+    return (
+        db.scalar(select(StorePhoto.id).where(StorePhoto.store_id == store.id).limit(1)) is not None
     )
 
 
