@@ -19,6 +19,7 @@ from pydantic import ConfigDict, Field
 
 from app.models.shooting_task import FootageType, TaskStatus
 from app.models.shorts_project import PromotionPurpose, ShortsStatus
+from app.models.video_output import RenderStatus
 from app.schemas.common import BaseSchema, UtcDatetime
 
 
@@ -357,3 +358,48 @@ class DraftSaveRequest(BaseSchema):
 class DraftSaveResponse(BaseSchema):
     message: str
     last_saved_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 14. AI 자동편집
+
+
+class EditStartRequest(BaseSchema):
+    target_platform: str = Field(min_length=1, max_length=50)
+
+
+class EditStartResponse(BaseSchema):
+    video_output_id: int
+    render_status: RenderStatus
+
+
+class TimelineItem(BaseSchema):
+    scene_order: int
+    duration_sec: int | None
+    # 전환 효과는 AI 편집 레시피에서 나온다 — 연동 전까지 null
+    effect: str | None
+
+
+class EditResultResponse(BaseSchema):
+    video_output_id: int
+    render_status: RenderStatus
+    # ⚠️ 실제 렌더링 진행률이 아니라 상태에서 매핑한 근사값이다
+    progress_percent: int
+    preview_video_url: str | None
+    timeline_summary: list[TimelineItem]
+
+
+class ReviseRequestType(StrEnum):
+    QUICK_BUTTON = "quick_button"
+    NATURAL_LANGUAGE = "natural_language"
+
+
+class EditReviseRequest(BaseSchema):
+    request_type: ReviseRequestType
+    action: str = Field(min_length=1, max_length=500)
+
+
+class EditReviseResponse(BaseSchema):
+    video_output_id: int
+    render_status: RenderStatus
+    # 프로젝트 내 산출물 순번 — 저장하지 않고 계산한다
+    revision_id: int

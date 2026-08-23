@@ -14,6 +14,7 @@ from app.models.store_target_customer import StoreTargetCustomer, TargetStatus
 from app.models.storyboard_scene import StoryboardScene
 from app.models.user import User
 from app.models.video_format import VideoFormat
+from app.models.video_output import RenderStatus, VideoOutput
 
 __all__ = [
     "FormatFavorite",
@@ -31,6 +32,8 @@ __all__ = [
     "StoreTargetCustomer",
     "StoryboardScene",
     "TargetStatus",
+    "RenderStatus",
     "User",
     "VideoFormat",
+    "VideoOutput",
 ]

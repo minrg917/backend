@@ -7,6 +7,7 @@ FastAPI가 기본으로 뱉는 `{"detail": ...}` 포맷을 쓰지 않고, API명
 
 import logging
 from http import HTTPStatus
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -42,12 +43,21 @@ _DEFAULT_MESSAGES: dict[int, str] = {
 }
 
 
-def error_response(status_code: int, error_code: str, message: str) -> JSONResponse:
-    """공통 에러 포맷 응답을 만든다."""
-    return JSONResponse(
-        status_code=status_code,
-        content={"error_code": error_code, "message": message},
-    )
+def error_response(
+    status_code: int,
+    error_code: str,
+    message: str,
+    extra: dict[str, Any] | None = None,
+) -> JSONResponse:
+    """공통 에러 포맷 응답을 만든다.
+
+    `extra`가 있으면 본문에 병합한다. 공통 두 필드만으로 부족한 경우에만 쓰며
+    (예: 14.1의 `incomplete_tasks`), 없으면 지금까지와 같은 형태가 나간다.
+    """
+    content: dict[str, Any] = {"error_code": error_code, "message": message}
+    if extra:
+        content.update(extra)
+    return JSONResponse(status_code=status_code, content=content)
 
 
 def _default_error_code(status_code: int) -> str:
@@ -89,7 +99,7 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AppError)
     async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
-        return error_response(exc.status_code, exc.error_code, exc.message)
+        return error_response(exc.status_code, exc.error_code, exc.message, exc.extra)
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
