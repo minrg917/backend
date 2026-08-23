@@ -18,6 +18,7 @@ class StoreNotFound(NotFoundError):
 """
 
 from http import HTTPStatus
+from typing import Any
 
 
 class AppError(Exception):
@@ -33,6 +34,7 @@ class AppError(Exception):
         *,
         error_code: str | None = None,
         status_code: int | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         if message is not None:
             self.message = message
@@ -40,6 +42,10 @@ class AppError(Exception):
             self.error_code = error_code
         if status_code is not None:
             self.status_code = status_code
+        # 일부 에러는 공통 두 필드만으로 부족하다 — 예: 14.1의 `incomplete_tasks`는
+        # "어떤 태스크가 비었는지"를 알려줘야 프론트가 태스크 보드로 안내할 수 있다.
+        # 여기 담긴 값은 응답 본문에 그대로 병합된다.
+        self.extra: dict[str, Any] = extra or {}
         super().__init__(self.message)
 
 

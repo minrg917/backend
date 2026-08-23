@@ -153,3 +153,50 @@ def _placeholder_plan(store: Store, video_format: VideoFormat) -> ShootingPlan:
         tasks=tasks,
         is_placeholder=True,
     )
+
+
+@dataclass(frozen=True)
+class EditRecipe:
+    """AI가 만든 편집 명령 (API명세서 14.1).
+
+    컷 순서·전환·자막·오디오 큐를 담는다(기능명세서 S14.x). 실제 구조는 AI 스펙이
+    확정되면 정해지며, 지금은 JSON으로 그대로 보관한다.
+    """
+
+    recipe: dict[str, Any]
+    resolution: str | None = None
+    has_licensed_audio: bool = False
+    is_placeholder: bool = False
+
+
+def generate_edit_recipe(target_platform: str, revision_action: str | None = None) -> EditRecipe:
+    """편집 레시피를 만든다.
+
+    `revision_action`이 있으면 수정 요청(14.3)이다 — "자막 크게" 같은 지시를
+    반영한 새 레시피를 만든다.
+
+    AI 서버가 설정돼 있지 않으면 임시 레시피를 돌려준다.
+    """
+    if not is_enabled():
+        return _placeholder_recipe(target_platform, revision_action)
+
+    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+
+
+def _placeholder_recipe(target_platform: str, revision_action: str | None) -> EditRecipe:
+    """AI 연동 전 임시 레시피.
+
+    **실제 편집 명령이 아니다.** 어떤 요청이 있었는지만 기록해두고, 렌더링도
+    일어나지 않는다(`render_status`가 진행되지 않음).
+    """
+    return EditRecipe(
+        recipe={
+            "target_platform": target_platform,
+            "revision_action": revision_action,
+            "note": "AI 연동 전 임시 레시피 — 실제 편집 명령이 아님",
+        },
+        # 플랫폼별 규격. 숏폼은 9:16이 표준이다.
+        resolution="1080x1920",
+        has_licensed_audio=False,
+        is_placeholder=True,
+    )

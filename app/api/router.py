@@ -14,6 +14,7 @@ from app.api.routers import (
     tasks,
     users,
     video_formats,
+    video_outputs,
 )
 
 api_router = APIRouter()
@@ -24,4 +25,5 @@ api_router.include_router(stores.router)
 api_router.include_router(shorts_projects.router)
 api_router.include_router(video_formats.router)
 api_router.include_router(tasks.router)
+api_router.include_router(video_outputs.router)
 api_router.include_router(users.router)

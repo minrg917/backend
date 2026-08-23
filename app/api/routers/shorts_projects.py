@@ -11,6 +11,9 @@ from app.schemas.shorts_project import (
     DraftResponse,
     DraftSaveRequest,
     DraftSaveResponse,
+    EditResultResponse,
+    EditStartRequest,
+    EditStartResponse,
     PlanCreateRequest,
     PlanResponse,
     ProjectCreateRequest,
@@ -31,6 +34,7 @@ from app.services import draft as draft_service
 from app.services import plan as plan_service
 from app.services import shooting_task as task_service
 from app.services import shorts_project as project_service
+from app.services import video_edit as edit_service
 
 router = APIRouter(prefix="/shorts-projects", tags=["shorts-projects"])
 
@@ -174,3 +178,38 @@ def save_draft(
     project = project_service.get_owned_project(db, user, project_id)
     project = draft_service.save_draft(db, project, payload)
     return DraftSaveResponse(message="임시저장 되었습니다.", last_saved_at=project.last_saved_at)
+
+
+# ---------------------------------------------------------------- 14.1 / 14.2 자동편집
+
+
+@router.post("/{project_id}/edit", response_model=EditStartResponse)
+def start_edit(
+    project_id: int, payload: EditStartRequest, user: CurrentUser, db: DbSession
+) -> EditStartResponse:
+    """AI 자동편집을 시작한다.
+
+    **모든 태스크에 촬영본이 있어야** 시작할 수 있다. 하나라도 비어 있으면 400과
+    함께 어떤 태스크가 남았는지(`incomplete_tasks`) 알려준다.
+    """
+    project = project_service.get_owned_project(db, user, project_id)
+    output = edit_service.start_edit(db, project, payload.target_platform)
+    return EditStartResponse(video_output_id=output.id, render_status=output.render_status)
+
+
+@router.get("/{project_id}/edit/result", response_model=EditResultResponse)
+def get_edit_result(project_id: int, user: CurrentUser, db: DbSession) -> EditResultResponse:
+    """편집 결과와 렌더링 진행 상태를 돌려준다.
+
+    프로젝트당 산출물이 여러 개(플랫폼별·수정 이력) 쌓이므로 **가장 최근 것**을 준다.
+    """
+    project = project_service.get_owned_project(db, user, project_id)
+    output = edit_service.latest_output(db, project)
+    return EditResultResponse(
+        video_output_id=output.id,
+        render_status=output.render_status,
+        progress_percent=edit_service.progress_percent(output),
+        # 미리보기 전용 파일을 따로 만들기 전까지는 결과 영상을 그대로 쓴다
+        preview_video_url=output.video_url,
+        timeline_summary=edit_service.build_timeline(db, project),
+    )
