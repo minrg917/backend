@@ -8,9 +8,10 @@ R16이 붙기 전까지 두 테이블은 항상 비어 있고, 따라서 `is_pos
 """
 
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -108,3 +109,45 @@ class SnsPost(Base):
 
     def __repr__(self) -> str:
         return f"<SnsPost id={self.id} output={self.video_output_id}>"
+
+
+class SnsPostMetric(Base):
+    """게시물 성과 지표 스냅샷 (`docs/ERD.sql`의 `sns_post_metrics`).
+
+    **한 행이 "어느 게시물의, 어느 지표가, 언제 얼마였는지" 하나를 담는다.**
+    지표를 컬럼으로 두지 않고 행으로 쌓는 이유는 두 가지다.
+
+    1. **플랫폼마다 주는 지표가 다르다.** Instagram에는 `saves`가 있고 YouTube에는
+       `averageViewPercentage`가 있다. 컬럼으로 두면 대부분이 NULL인 넓은 테이블이 되고,
+       플랫폼이 지표를 추가할 때마다 마이그레이션이 필요하다.
+    2. **없는 지표는 표시하지 않아야 한다**(기능명세서 S17.2.1). 행이 없으면 없는 것이라
+       `0`과 구분된다 — `0`은 "실제로 0"이라는 주장이라 함부로 쓸 수 없다.
+
+    같은 게시물의 같은 지표가 **여러 번 쌓인다**. 주기적으로 스냅샷을 남겨 추이
+    그래프를 그리기 위함이다.
+    """
+
+    __tablename__ = "sns_post_metrics"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True, comment="지표 ID")
+    sns_post_id: Mapped[int] = mapped_column(
+        BigInt,
+        ForeignKey("sns_posts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="게시물 ID",
+    )
+    metric_name: Mapped[str] = mapped_column(
+        String(50), nullable=False, comment="지표명(views/likes/comments/shares/saves 등)"
+    )
+    # 정수 지표(조회수)와 비율 지표(평균 시청률)가 같은 컬럼에 들어와 DECIMAL을 쓴다.
+    # float는 반올림 오차가 누적돼 "조회수 15229.999"처럼 보일 수 있다.
+    metric_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2), nullable=True, comment="지표 값"
+    )
+    collected_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, nullable=False, comment="수집 시각(UTC)"
+    )
+
+    def __repr__(self) -> str:
+        return f"<SnsPostMetric post={self.sns_post_id} {self.metric_name}={self.metric_value}>"

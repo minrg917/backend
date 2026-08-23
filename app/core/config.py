@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     AI_SERVER_API_KEY: str = ""
     AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
 
+    # SNS 연동 (R16) — 플랫폼 개발자 콘솔에서 발급받은 값을 넣는다.
+    # 비어 있는 플랫폼은 연동 시작(16.1)에서 503 SNS_NOT_CONFIGURED로 응답한다 —
+    # 키가 없는 채로 인증 URL을 만들면 사용자가 플랫폼 화면까지 갔다가 실패한다.
+    INSTAGRAM_CLIENT_ID: str = ""
+    INSTAGRAM_CLIENT_SECRET: str = ""
+    YOUTUBE_CLIENT_ID: str = ""
+    YOUTUBE_CLIENT_SECRET: str = ""
+    # OAuth 콜백을 받을 우리 서버 주소. 플랫폼 콘솔에 등록한 값과 정확히 같아야 한다
+    # (한 글자만 달라도 플랫폼이 리다이렉트를 거부한다). 배포 도메인 확정 후 채운다.
+    SNS_REDIRECT_BASE_URL: str = ""
+
     # 파일 저장소 — 배포 시 "s3" 구현을 추가하고 이 값만 바꾼다
     STORAGE_BACKEND: str = "local"
     # 로컬 저장 루트(.gitignore에 포함). 상대 경로면 프로젝트 루트 기준.
@@ -97,6 +108,21 @@ class Settings(BaseSettings):
     @property
     def kakao_search_enabled(self) -> bool:
         return bool(self.KAKAO_REST_API_KEY)
+
+    @property
+    def configured_sns_platforms(self) -> set[str]:
+        """키가 채워진 SNS 플랫폼 목록.
+
+        16.1이 "연동할 수 있는 플랫폼"을 판단하는 근거다. 게시(16.2)는 NAVER Clip·
+        TikTok도 지원하지만 **연동은 Instagram·YouTube만** 한다(2026-08-24 확정) —
+        나머지 둘은 성과 지표를 가져올 API 경로가 없다.
+        """
+        platforms = set()
+        if self.INSTAGRAM_CLIENT_ID and self.INSTAGRAM_CLIENT_SECRET:
+            platforms.add("INSTAGRAM")
+        if self.YOUTUBE_CLIENT_ID and self.YOUTUBE_CLIENT_SECRET:
+            platforms.add("YOUTUBE")
+        return platforms
 
     @property
     def max_upload_size_bytes(self) -> int:

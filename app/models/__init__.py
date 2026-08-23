@@ -6,7 +6,7 @@ Alembic autogenerate가 테이블을 인식하려면 새 모델을 여기서 임
 from app.models.format_favorite import FormatFavorite
 from app.models.shooting_task import COMPLETED_STATUSES, FootageType, ShootingTask, TaskStatus
 from app.models.shorts_project import PromotionPurpose, ShortsProject, ShortsStatus
-from app.models.sns import PostStatus, SnsConnection, SnsPost
+from app.models.sns import PostStatus, SnsConnection, SnsPost, SnsPostMetric
 from app.models.store import Store
 from app.models.store_insight import StoreInsight
 from app.models.store_menu import StoreMenu
@@ -29,6 +29,7 @@ __all__ = [
     "PostStatus",
     "SnsConnection",
     "SnsPost",
+    "SnsPostMetric",
     "Store",
     "StoreInsight",
     "StoreMenu",

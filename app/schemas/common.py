@@ -30,6 +30,20 @@ UtcDatetime = Annotated[datetime, PlainSerializer(_to_utc_iso, return_type=str)]
 Coordinate = Annotated[Decimal, PlainSerializer(float, return_type=float)]
 
 
+def _decimal_to_number(value: Decimal) -> float | int:
+    """Decimal을 JSON 숫자로 바꾼다. 소수부가 없으면 정수로 내보낸다.
+
+    성과지표는 조회수(15230)와 비율(0.42)이 같은 컬럼에 섞여 들어온다. 전부 float으로
+    보내면 조회수가 `15230.0`으로 나가 화면에서 그대로 찍힐 수 있고, Decimal 그대로면
+    문자열(`"15230"`)이라 프론트가 크기 비교를 못 한다.
+    """
+    return int(value) if value == value.to_integral_value() else float(value)
+
+
+# 성과지표 값에 사용한다. 예: `metric_value: MetricValue | None`
+MetricValue = Annotated[Decimal, PlainSerializer(_decimal_to_number, return_type=float | int)]
+
+
 class BaseSchema(BaseModel):
     """모든 요청/응답 스키마의 부모.
 
