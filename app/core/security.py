@@ -53,6 +53,11 @@ class InvalidToken(UnauthorizedError):
     message = "유효하지 않은 토큰입니다."
 
 
+class InactiveUser(UnauthorizedError):
+    error_code = "INACTIVE_USER"
+    message = "탈퇴했거나 비활성화된 계정입니다."
+
+
 def hash_password(plain_password: str) -> str:
     """비밀번호를 bcrypt 해시 문자열로 만든다."""
     return bcrypt.hashpw(plain_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
