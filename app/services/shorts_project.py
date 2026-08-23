@@ -30,6 +30,11 @@ class InvalidPromotionDetail(BadRequestError):
     message = "홍보 목적에 맞지 않는 상세 정보입니다."
 
 
+class PromotionPurposeRequired(BadRequestError):
+    error_code = "PROMOTION_PURPOSE_REQUIRED"
+    message = "홍보 목적을 먼저 설정해야 상세 정보를 저장할 수 있습니다."
+
+
 class MenuNotAllowed(BadRequestError):
     error_code = "MENU_NOT_ALLOWED"
     message = "메뉴소개 목적일 때만 menu_id를 사용할 수 있습니다."
@@ -133,7 +138,21 @@ def update_project(
 ) -> ShortsProject:
     """프로젝트 설정을 부분 수정한다 (API명세서 4.2)."""
     changes = payload.model_dump(exclude_unset=True)
-    purpose = PromotionPurpose(project.promotion_purpose)
+
+    # 검증 기준이 되는 홍보 목적을 정한다.
+    # 이번 요청에 목적이 함께 왔으면 **새 목적**으로 검증해야 한다 — 목적과 상세를
+    # 한 번에 보내는 경우(목적 없이 만든 프로젝트를 채우는 흐름)에 저장된 옛 값으로
+    # 검증하면 방금 보낸 상세가 엉뚱한 스키마에 걸린다.
+    raw_purpose = changes.get("promotion_purpose", project.promotion_purpose)
+    # 홈 피드 경로로 만든 프로젝트는 홍보 목적이 없다(2026-08-23 선택 필드로 변경).
+    # 목적을 모르면 promotion_detail을 어떤 구조로 검증할지 알 수 없다.
+    purpose = PromotionPurpose(raw_purpose) if raw_purpose else None
+
+    needs_purpose = changes.get("promotion_detail") is not None or (
+        changes.get("menu_id") is not None
+    )
+    if purpose is None and needs_purpose:
+        raise PromotionPurposeRequired
 
     if "menu_id" in changes and changes["menu_id"] is not None:
         # menu_id는 메뉴소개 전용이다. 다른 목적에 넣으면 의미가 없고,
@@ -141,7 +160,7 @@ def update_project(
         if purpose is not PromotionPurpose.MENU:
             raise MenuNotAllowed(
                 f"홍보 목적이 '{purpose.value}'인 프로젝트에는 menu_id를 지정할 수 없습니다."
-            )
+            )  # purpose는 위에서 None이 걸러졌다
         _validate_menu(db, project, changes["menu_id"])
 
     if changes.get("store_target_customer_id") is not None:

@@ -1,9 +1,10 @@
 """숏폼 프로젝트 스키마 (API명세서 4.1~4.3).
 
 **`promotion_detail`의 구조는 `promotion_purpose`에 따라 4갈래로 갈린다.**
-그런데 판별자인 `promotion_purpose`는 4.1(생성) 때 정해지고 4.2(수정) Body에는
+그런데 판별자인 `promotion_purpose`는 보통 4.1(생성) 때 정해지고 4.2 요청에는
 들어오지 않는다. 그래서 Pydantic의 discriminated union을 쓸 수 없고, 저장된
 프로젝트를 읽어 그 목적에 맞는 스키마로 검증한다(`app/services/shorts_project.py`).
+목적과 상세가 한 요청에 함께 오면 **새 목적**을 기준으로 검증한다.
 
 목적별 값 목록은 기획 확정 대기 중이다(`docs/PM_DECISIONS.md` 「확인 대기 중」).
 확정되면 **값만 바뀌고 구조는 그대로**이므로, 값 정의를 이 파일 한곳에 모아둔다.
@@ -96,20 +97,22 @@ PROMOTION_DETAIL_SCHEMAS: dict[PromotionPurpose, type[_DetailBase]] = {
 
 class ProjectCreateRequest(BaseSchema):
     store_id: int
-    promotion_purpose: PromotionPurpose
+    # 선택 — 진입 경로마다 목적을 받는 시점이 다르다(2026-08-23).
+    # 홈 피드에서 포맷을 고르는 경로는 목적을 묻지 않고 바로 촬영 준비로 넘어간다.
+    promotion_purpose: PromotionPurpose | None = None
 
 
 class ProjectCreateResponse(BaseSchema):
     id: int
     store_id: int
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     shorts_status: ShortsStatus
     created_at: UtcDatetime
 
 
 class ProjectSummary(BaseSchema):
     id: int
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     shorts_status: ShortsStatus
     updated_at: UtcDatetime
 
@@ -130,6 +133,8 @@ class ProjectUpdateRequest(BaseSchema):
     """
 
     menu_id: int | None = None
+    # 목적 없이 만든 프로젝트(홈 피드 경로)에 나중에 목적을 채울 수 있어야 한다
+    promotion_purpose: PromotionPurpose | None = None
     promotion_detail: dict[str, Any] | None = None
     store_target_customer_id: int | None = None
     face_exposure_mode: str | None = Field(default=None, max_length=20)
@@ -145,7 +150,7 @@ class ProjectSettingsResponse(BaseSchema):
 
     id: int
     menu_id: int | None
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     promotion_detail: dict[str, Any] | None
     store_target_customer_id: int | None
     face_exposure_mode: str | None
@@ -162,7 +167,7 @@ class ProjectDetailResponse(BaseSchema):
     video_format_id: int | None
     store_target_customer_id: int | None
     menu_id: int | None
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     promotion_detail: dict[str, Any] | None
     face_exposure_mode: str | None
     shooting_condition: str | None

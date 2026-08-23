@@ -423,3 +423,131 @@ def test_unknown_project_returns_404(client: TestClient, auth_headers: dict[str,
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "PROJECT_NOT_FOUND"
+
+
+# ---------------------------------------------------------------- 4.1 promotion_purpose 선택
+
+
+def test_create_project_without_promotion_purpose(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """홈 피드에서 포맷을 고르는 경로는 홍보 목적을 묻지 않는다(2026-08-23 선택 필드로 변경)."""
+    response = client.post("/shorts-projects", json={"store_id": store_id}, headers=auth_headers)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["promotion_purpose"] is None
+
+
+def test_purpose_can_be_filled_in_later(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """목적 없이 만든 프로젝트도 나중에 4.2로 채울 수 있어야 한다."""
+    project_id = client.post(
+        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
+    ).json()["id"]
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={"promotion_purpose": "가게소개"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["promotion_purpose"] == "가게소개"
+
+
+def test_promotion_detail_without_purpose_is_rejected(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """목적을 모르면 promotion_detail을 어떤 구조로 검증할지 알 수 없다.
+
+    500으로 깨지는 대신 400으로 막고 무엇을 해야 하는지 알려준다.
+    """
+    project_id = client.post(
+        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
+    ).json()["id"]
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={"promotion_detail": {"elements": ["공간"]}},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "PROMOTION_PURPOSE_REQUIRED"
+
+
+def test_menu_id_without_purpose_is_rejected(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    project_id = client.post(
+        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
+    ).json()["id"]
+    menu_id = _create_menu(client, auth_headers, store_id)
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}", json={"menu_id": menu_id}, headers=auth_headers
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "PROMOTION_PURPOSE_REQUIRED"
+
+
+def test_other_settings_work_without_purpose(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """목적과 무관한 설정(얼굴노출·촬영조건)은 목적이 없어도 저장된다."""
+    project_id = client.post(
+        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
+    ).json()["id"]
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={"face_exposure_mode": "비노출", "shooting_condition": "혼자 촬영"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["face_exposure_mode"] == "비노출"
+
+
+def test_purpose_and_detail_in_one_request(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """목적과 상세를 한 번에 보내면 **새 목적** 기준으로 검증해야 한다.
+
+    저장된 옛 값(여기서는 null)으로 검증하면 방금 보낸 상세가 통째로 거부된다.
+    """
+    project_id = client.post(
+        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
+    ).json()["id"]
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={
+            "promotion_purpose": "가게소개",
+            "promotion_detail": {"elements": ["공간", "사장님/직원"]},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["promotion_purpose"] == "가게소개"
+    assert body["promotion_detail"] == {"elements": ["공간", "사장님/직원"]}
+
+
+def test_changing_purpose_validates_against_new_purpose(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """목적을 바꾸면서 옛 목적의 상세를 보내면 거부돼야 한다."""
+    project_id = _create_project(client, auth_headers, store_id, "메뉴소개")
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={"promotion_purpose": "가게소개", "promotion_detail": {"detail_tag": "대표메뉴"}},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_PROMOTION_DETAIL"

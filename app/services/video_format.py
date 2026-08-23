@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
+from app.models.format_favorite import FormatFavorite
+from app.models.user import User
 from app.models.video_format import VideoFormat
 from app.schemas.video_format import FormatSort, VideoFormatSummary
 
@@ -54,8 +56,83 @@ def get_format(db: Session, format_id: int) -> VideoFormat:
     return video_format
 
 
+def list_favorites(
+    db: Session, user: User, page: int = 1, size: int = DEFAULT_PAGE_SIZE
+) -> list[VideoFormat]:
+    """찜한 포맷 목록. 최근 찜한 순으로 돌려준다 (API명세서 5.3)."""
+    size = min(max(size, 1), MAX_PAGE_SIZE)
+    offset = max(page - 1, 0) * size
+    statement = (
+        select(VideoFormat)
+        .join(FormatFavorite, FormatFavorite.video_format_id == VideoFormat.id)
+        .where(FormatFavorite.user_id == user.id)
+        .order_by(FormatFavorite.created_at.desc(), FormatFavorite.id.desc())
+    )
+    return list(db.scalars(statement.offset(offset).limit(size)))
+
+
+def add_favorite(db: Session, user: User, format_id: int) -> FormatFavorite:
+    """포맷을 찜한다.
+
+    **멱등이다** — 이미 찜한 포맷이면 기존 기록을 그대로 돌려준다. 하트를 빠르게
+    여러 번 누르거나 네트워크가 재시도해도 409를 던지지 않는다. 이미 원하는 상태인
+    요청을 에러로 볼 이유가 없다.
+    """
+    get_format(db, format_id)  # 없는 포맷이면 404
+
+    existing = db.scalar(
+        select(FormatFavorite).where(
+            FormatFavorite.user_id == user.id, FormatFavorite.video_format_id == format_id
+        )
+    )
+    if existing is not None:
+        return existing
+
+    favorite = FormatFavorite(user_id=user.id, video_format_id=format_id)
+    db.add(favorite)
+    db.commit()
+    db.refresh(favorite)
+    return favorite
+
+
+def remove_favorite(db: Session, user: User, format_id: int) -> None:
+    """찜을 해제한다. **찜하지 않은 포맷이어도 조용히 통과한다**(멱등)."""
+    get_format(db, format_id)  # 없는 포맷이면 404
+
+    favorite = db.scalar(
+        select(FormatFavorite).where(
+            FormatFavorite.user_id == user.id, FormatFavorite.video_format_id == format_id
+        )
+    )
+    if favorite is not None:
+        db.delete(favorite)
+        db.commit()
+
+
+def _favorite_ids(db: Session, user: User, formats: list[VideoFormat]) -> set[int]:
+    """이 목록 중 사용자가 찜한 포맷 id들을 **한 번의 쿼리로** 가져온다.
+
+    포맷마다 개별 조회하면 목록 크기만큼 쿼리가 나간다(N+1). 피드는 스크롤로
+    계속 불리는 화면이라 여기서 새면 그대로 부하가 된다.
+    """
+    if not formats:
+        return set()
+    return set(
+        db.scalars(
+            select(FormatFavorite.video_format_id).where(
+                FormatFavorite.user_id == user.id,
+                FormatFavorite.video_format_id.in_([f.id for f in formats]),
+            )
+        )
+    )
+
+
 def build_recommendations(
-    formats: list[VideoFormat], project_id: int | None = None
+    db: Session,
+    user: User,
+    formats: list[VideoFormat],
+    project_id: int | None = None,
+    favorites_only: bool = False,
 ) -> list[VideoFormatSummary]:
     """목록에 AI 추천 이유를 붙여 응답 형태로 만든다.
 
@@ -71,9 +148,27 @@ def build_recommendations(
     # AI 연동 시 여기를 {format_id: ["이유1", "이유2"]}로 채우면 된다.
     reasons: dict[int, list[str]] = {}
 
+    # 찜 목록(5.3)에서는 전부 찜한 것이므로 다시 조회하지 않는다.
+    favorite_ids = {f.id for f in formats} if favorites_only else _favorite_ids(db, user, formats)
+
     return [
         VideoFormatSummary.model_validate(video_format).model_copy(
-            update={"recommend_reasons": reasons.get(video_format.id, [])}
+            update={
+                "is_favorite": video_format.id in favorite_ids,
+                "recommend_reasons": reasons.get(video_format.id, []),
+            }
         )
         for video_format in formats
     ]
+
+
+def is_favorite(db: Session, user: User, format_id: int) -> bool:
+    """단건 조회(5.2)용 찜 여부."""
+    return (
+        db.scalar(
+            select(FormatFavorite.id).where(
+                FormatFavorite.user_id == user.id, FormatFavorite.video_format_id == format_id
+            )
+        )
+        is not None
+    )
