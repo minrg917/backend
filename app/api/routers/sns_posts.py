@@ -12,7 +12,9 @@ from app.schemas.performance import (
     MetricItem,
     MetricListResponse,
 )
+from app.schemas.sns import SnsPostLinkRequest, SnsPostLinkResponse, SnsPostResponse
 from app.services import performance as perf_service
+from app.services import sns as sns_service
 from app.services import store as store_service
 
 router = APIRouter(prefix="/sns-posts", tags=["sns-posts"])
@@ -64,9 +66,37 @@ def get_metrics(
     같은 지표가 여러 번 쌓이므로 추이 그래프를 그릴 수 있다. **플랫폼이 주지 않는
     지표는 행 자체가 없다** — 화면에서는 N/A로 표시한다.
     """
-    post = perf_service.get_owned_post(db, user, post_id)
+    post = sns_service.get_owned_post(db, user, post_id)
     metrics = perf_service.list_metrics(db, post, date_from, date_to)
     return MetricListResponse(
         sns_post_id=post.id,
         metrics=[MetricItem.model_validate(metric) for metric in metrics],
     )
+
+
+# ---------------------------------------------------------------- 16.3 게시상태 / 연결확정
+
+
+@router.get("/{post_id}", response_model=SnsPostResponse)
+def get_post(post_id: int, user: CurrentUser, db: DbSession) -> SnsPostResponse:
+    """게시물의 연결 상태를 돌려준다.
+
+    `post_status`는 **게시 성공 여부가 아니라 연결 상태**다. 공유 핸드오프 방식이라
+    서버는 실제로 올라갔는지 확인할 수 없고, "실제 게시물과 이어졌는지"만 안다.
+    """
+    post = sns_service.get_owned_post(db, user, post_id)
+    return SnsPostResponse.model_validate(post)
+
+
+@router.patch("/{post_id}", response_model=SnsPostLinkResponse)
+def link_post(
+    post_id: int, payload: SnsPostLinkRequest, user: CurrentUser, db: DbSession
+) -> SnsPostLinkResponse:
+    """사장님이 올린 실제 게시물과 연결한다.
+
+    **이 연결이 성과 조회의 열쇠다.** 플랫폼에서 지표를 가져오려면 그쪽 게시물 ID가
+    필요한데, 공유 핸드오프에서는 서버가 알 수 없어 사장님이 알려줘야 한다.
+    """
+    post = sns_service.get_owned_post(db, user, post_id)
+    post = sns_service.link_post(db, post, payload.external_post_id, payload.posted_at)
+    return SnsPostLinkResponse.model_validate(post)
