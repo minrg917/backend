@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.error_handlers import register_error_handlers
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -21,4 +22,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_error_handlers(app)
 app.include_router(api_router)

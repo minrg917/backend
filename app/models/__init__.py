@@ -1,0 +1,8 @@
+"""SQLAlchemy 모델 모음.
+
+Alembic autogenerate가 테이블을 인식하려면 새 모델을 여기서 임포트해야 한다.
+"""
+
+from app.models.user import User
+
+__all__ = ["User"]
