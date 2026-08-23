@@ -15,7 +15,8 @@
 
 - `feature/fix → develop`: PR 필수, 팀원 1명 이상 리뷰 승인 후 merge.
 - `develop → main`: 일정 단위(주기적/기능 묶음 단위)로 병합, 배포 시점에 진행.
-- Merge 방식은 **Squash and merge** 사용(여러 커밋을 하나로 합쳐서 `main` 히스토리를 깔끔하게 유지).
+- Merge 방식은 **일반 merge(Create a merge commit)** 사용 — 브랜치의 커밋을 그대로 살려서 합친다.
+  - Squash and merge는 커밋을 하나로 합치면서 **새 커밋을 만든다.** 그래서 PR을 다른 PR 위에 쌓아 올린 경우(예: 공통 기반 PR 위에 API PR), 앞 PR을 squash로 머지하면 뒤 PR에 이미 머지된 내용이 다시 나타나거나 충돌이 난다. 실제로 2026-08-23에 이 문제를 겪어 일반 merge로 변경했다.
 - merge 완료된 브랜치는 삭제한다.
 
 ## 2. 커밋 메시지 규칙
