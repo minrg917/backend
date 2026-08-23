@@ -1,9 +1,12 @@
 """숏폼 프로젝트 스키마 (API명세서 4.1~4.3).
 
 **`promotion_detail`의 구조는 `promotion_purpose`에 따라 4갈래로 갈린다.**
-그런데 판별자인 `promotion_purpose`는 4.1(생성) 때 정해지고 4.2(수정) Body에는
-들어오지 않는다. 그래서 Pydantic의 discriminated union을 쓸 수 없고, 저장된
-프로젝트를 읽어 그 목적에 맞는 스키마로 검증한다(`app/services/shorts_project.py`).
+그런데 판별자인 `promotion_purpose`는 4.1(생성) 때 정해지고 4.2 요청에는 들어오지
+않는다. 그래서 Pydantic의 discriminated union을 쓸 수 없고, 저장된 프로젝트를 읽어
+그 목적에 맞는 스키마로 검증한다(`app/services/shorts_project.py`).
+
+**목적은 생성 후 바꿀 수 없다**(2026-08-23 확정). 다른 목적으로 만들고 싶으면
+프로젝트를 새로 만든다.
 
 목적별 값 목록은 기획 확정 대기 중이다(`docs/PM_DECISIONS.md` 「확인 대기 중」).
 확정되면 **값만 바뀌고 구조는 그대로**이므로, 값 정의를 이 파일 한곳에 모아둔다.
@@ -96,20 +99,23 @@ PROMOTION_DETAIL_SCHEMAS: dict[PromotionPurpose, type[_DetailBase]] = {
 
 class ProjectCreateRequest(BaseSchema):
     store_id: int
+    # 필수. 홈 피드 진입에도 목적 선택 화면을 두기로 확정(2026-08-23) — 잠시 선택으로
+    # 풀었다가 되돌린 것이다. 응답·DB는 NULL을 허용한 채로 두는데, 완화 기간에 만들어진
+    # 기존 row가 남아 있기 때문이다. 새로 만드는 것만 여기서 막는다.
     promotion_purpose: PromotionPurpose
 
 
 class ProjectCreateResponse(BaseSchema):
     id: int
     store_id: int
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     shorts_status: ShortsStatus
     created_at: UtcDatetime
 
 
 class ProjectSummary(BaseSchema):
     id: int
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     shorts_status: ShortsStatus
     updated_at: UtcDatetime
 
@@ -145,7 +151,7 @@ class ProjectSettingsResponse(BaseSchema):
 
     id: int
     menu_id: int | None
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     promotion_detail: dict[str, Any] | None
     store_target_customer_id: int | None
     face_exposure_mode: str | None
@@ -162,7 +168,7 @@ class ProjectDetailResponse(BaseSchema):
     video_format_id: int | None
     store_target_customer_id: int | None
     menu_id: int | None
-    promotion_purpose: PromotionPurpose
+    promotion_purpose: PromotionPurpose | None
     promotion_detail: dict[str, Any] | None
     face_exposure_mode: str | None
     shooting_condition: str | None

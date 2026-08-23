@@ -133,14 +133,17 @@ def update_project(
 ) -> ShortsProject:
     """프로젝트 설정을 부분 수정한다 (API명세서 4.2)."""
     changes = payload.model_dump(exclude_unset=True)
-    purpose = PromotionPurpose(project.promotion_purpose)
+    # 목적은 4.1에서 필수로 받으므로 여기서는 항상 값이 있다. 4.1이 잠시 선택이었던
+    # 기간에 만들어진 row만 NULL일 수 있어 방어적으로 처리한다.
+    purpose = PromotionPurpose(project.promotion_purpose) if project.promotion_purpose else None
 
     if "menu_id" in changes and changes["menu_id"] is not None:
         # menu_id는 메뉴소개 전용이다. 다른 목적에 넣으면 의미가 없고,
         # 조용히 무시하면 프론트는 저장된 줄 알게 된다.
         if purpose is not PromotionPurpose.MENU:
+            label = purpose.value if purpose else "미설정"
             raise MenuNotAllowed(
-                f"홍보 목적이 '{purpose.value}'인 프로젝트에는 menu_id를 지정할 수 없습니다."
+                f"홍보 목적이 '{label}'인 프로젝트에는 menu_id를 지정할 수 없습니다."
             )
         _validate_menu(db, project, changes["menu_id"])
 
@@ -148,6 +151,12 @@ def update_project(
         _validate_target(db, project, changes["store_target_customer_id"])
 
     if changes.get("promotion_detail") is not None:
+        if purpose is None:
+            # 4.1이 잠시 선택이었던 기간의 잔여 데이터. 목적을 모르면 어떤 구조로
+            # 검증할지 알 수 없어 500으로 깨지는 대신 명시적으로 막는다.
+            raise InvalidPromotionDetail(
+                "홍보 목적이 없는 프로젝트입니다. 프로젝트를 새로 만들어 주세요."
+            )
         changes["promotion_detail"] = _validate_promotion_detail(
             purpose, changes["promotion_detail"]
         )

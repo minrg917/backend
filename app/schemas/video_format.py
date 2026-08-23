@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from app.schemas.common import BaseSchema
+from app.schemas.common import BaseSchema, UtcDatetime
 
 
 class FormatSort(StrEnum):
@@ -36,6 +36,8 @@ class VideoFormatSummary(BaseSchema):
     face_exposure_level: str | None
     reference_url: str
     source_platform: str | None
+    # 로그인 사용자가 이 포맷을 찜했는지. 피드에서 하트 채움 여부를 그리는 데 쓴다.
+    is_favorite: bool = False
     # AI 추천 이유. 연동 전이라 항상 빈 배열이다(기능명세서 S05.1.2는 최소 2개 요구).
     recommend_reasons: list[str] = Field(default_factory=list)
 
@@ -53,3 +55,12 @@ class VideoFormatDetailResponse(BaseSchema):
     expected_duration_sec: int | None
     shooting_difficulty: str | None
     face_exposure_level: str | None
+    is_favorite: bool = False
+
+
+class FavoriteResponse(BaseSchema):
+    """찜하기 응답 (5.3 POST)."""
+
+    video_format_id: int
+    is_favorite: bool
+    created_at: UtcDatetime

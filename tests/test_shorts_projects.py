@@ -423,3 +423,75 @@ def test_unknown_project_returns_404(client: TestClient, auth_headers: dict[str,
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "PROJECT_NOT_FOUND"
+
+
+# ---------------------------------------------------------------- 4.1 promotion_purpose 필수
+
+
+def test_create_project_requires_promotion_purpose(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """홈 피드 진입에도 목적 선택 화면을 두기로 확정(2026-08-23) — 목적은 필수다.
+
+    한때 선택으로 완화했다가 되돌린 계약이라, 회귀하지 않도록 테스트로 고정한다.
+    """
+    response = client.post("/shorts-projects", json={"store_id": store_id}, headers=auth_headers)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "VALIDATION_ERROR"
+    assert "promotion_purpose" in body["message"]
+
+
+def test_purpose_cannot_be_changed_after_creation(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """목적은 생성 후 바꿀 수 없다(2026-08-23 확정).
+
+    4.2가 `promotion_purpose`를 받지 않으므로 보내도 무시되고 원래 값이 유지된다.
+    바꾸고 싶으면 프로젝트를 새로 만든다.
+    """
+    project_id = _create_project(client, auth_headers, store_id, "메뉴소개")
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={"promotion_purpose": "가게소개"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["promotion_purpose"] == "메뉴소개"
+
+
+def test_settings_unrelated_to_purpose_still_work(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    project_id = _create_project(client, auth_headers, store_id, "가게소개")
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}",
+        json={"face_exposure_mode": "비노출", "shooting_condition": "혼자 촬영"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["face_exposure_mode"] == "비노출"
+
+
+def test_video_format_id_in_patch_is_ignored(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """포맷 선택은 7.1에서만 저장한다 — 4.2로 보내도 반영되지 않는다.
+
+    프론트가 한때 4.2로도 보내고 있었는데 스키마에 없어 조용히 버려지고 있었다.
+    그 동작이 유지되는지(=엉뚱하게 저장되지 않는지) 고정한다.
+    """
+    project_id = _create_project(client, auth_headers, store_id, "메뉴소개")
+
+    response = client.patch(
+        f"/shorts-projects/{project_id}", json={"video_format_id": 71}, headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    detail = client.get(f"/shorts-projects/{project_id}", headers=auth_headers).json()
+    assert detail["video_format_id"] is None

@@ -67,8 +67,10 @@ class ShortsProject(Base, TimestampMixin):
         nullable=True,
         comment="홍보 목적이 메뉴소개일 때 선택한 메뉴 ID. 그 외 목적일 땐 NULL",
     )
-    promotion_purpose: Mapped[PromotionPurpose] = mapped_column(
-        String(50), nullable=False, comment="홍보 목적(메뉴소개/이벤트알리기/가게소개/고객늘리기)"
+    # 진입 경로마다 목적을 받는 시점이 달라 NULL을 허용한다 — 홈 피드에서 포맷을 고르는
+    # 경로는 목적을 묻지 않고 바로 촬영 준비로 넘어간다(2026-08-23 화면 확인).
+    promotion_purpose: Mapped[PromotionPurpose | None] = mapped_column(
+        String(50), nullable=True, comment="홍보 목적(메뉴소개/이벤트알리기/가게소개/고객늘리기)"
     )
     promotion_detail: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, comment="홍보 목적별 상세 데이터. promotion_purpose에 따라 구조가 다름"
