@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
+from app.models.store_target_customer import TargetStatus
 from app.schemas.common import BaseSchema, Coordinate, UtcDatetime
 
 
@@ -87,3 +88,187 @@ class ImportStatusResponse(BaseSchema):
     store_id: int
     overall_status: ImportItemStatus
     items: list[ImportStatusItem]
+
+
+# ---------------------------------------------------------------- 3.1 기본정보 + 브랜드톤
+
+
+class StoreDetailResponse(BaseSchema):
+    id: int
+    name: str
+    category: str | None
+    sub_category: str | None
+    address: str | None
+    latitude: Coordinate | None
+    longitude: Coordinate | None
+    phone: str | None
+    business_hours: str | None
+    brand_tone: str | None
+    brand_color: str | None
+    logo_url: str | None
+    info_source: str | None
+    external_channel_url: str | None
+    updated_at: UtcDatetime
+
+
+class StoreUpdateRequest(BaseSchema):
+    """부분 수정. 보낸 필드만 반영하고 나머지는 건드리지 않는다.
+
+    모든 필드가 선택이라 `model_dump(exclude_unset=True)`로 "보낸 것"만 골라낸다.
+    None을 명시적으로 보내면 그 필드를 비우는 것으로 처리된다.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    category: str | None = Field(default=None, max_length=100)
+    sub_category: str | None = Field(default=None, max_length=100)
+    address: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=20)
+    business_hours: str | None = Field(default=None, max_length=500)
+    brand_tone: str | None = None
+    brand_color: str | None = Field(default=None, max_length=20)
+    logo_url: str | None = Field(default=None, max_length=255)
+    external_channel_url: str | None = Field(default=None, max_length=255)
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+
+
+class StoreUpdateResponse(BaseSchema):
+    """명세서 3.1 PATCH 응답 — 바꾼 필드만 담아 내보낸다.
+
+    `id`/`updated_at` 외의 필드는 요청에 담겨 있던 것만 응답에 포함된다.
+    라우터에서 `exclude_unset=True`로 직렬화하므로 나머지 키는 아예 나가지 않는다.
+    """
+
+    id: int
+    name: str | None = None
+    category: str | None = None
+    sub_category: str | None = None
+    address: str | None = None
+    phone: str | None = None
+    business_hours: str | None = None
+    brand_tone: str | None = None
+    brand_color: str | None = None
+    logo_url: str | None = None
+    external_channel_url: str | None = None
+    latitude: Coordinate | None = None
+    longitude: Coordinate | None = None
+    updated_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 3.2 대표메뉴
+
+
+class MenuResponse(BaseSchema):
+    id: int
+    name: str
+    price: int | None
+    description: str | None
+    image_url: str | None
+    is_new_menu: bool
+    is_event_menu: bool
+    is_sold_out: bool
+
+
+class MenuListResponse(BaseSchema):
+    menus: list[MenuResponse]
+
+
+class MenuCreateRequest(BaseSchema):
+    name: str = Field(min_length=1, max_length=200)
+    price: int | None = Field(default=None, ge=0)
+    description: str | None = None
+    image_url: str | None = Field(default=None, max_length=255)
+    is_new_menu: bool = False
+    is_event_menu: bool = False
+    is_sold_out: bool = False
+
+
+class MenuCreateResponse(BaseSchema):
+    id: int
+    name: str
+    price: int | None
+    is_new_menu: bool
+    created_at: UtcDatetime
+
+
+class MenuUpdateRequest(BaseSchema):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    price: int | None = Field(default=None, ge=0)
+    description: str | None = None
+    image_url: str | None = Field(default=None, max_length=255)
+    is_new_menu: bool | None = None
+    is_event_menu: bool | None = None
+    is_sold_out: bool | None = None
+
+
+class MenuUpdateResponse(BaseSchema):
+    """3.2 PATCH 응답 — 바꾼 필드만 (`exclude_unset`)."""
+
+    id: int
+    name: str | None = None
+    price: int | None = None
+    description: str | None = None
+    image_url: str | None = None
+    is_new_menu: bool | None = None
+    is_event_menu: bool | None = None
+    is_sold_out: bool | None = None
+    updated_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 3.4 타깃고객
+
+
+class TargetCustomerResponse(BaseSchema):
+    id: int
+    target_type: str | None
+    target_description: str | None
+    ai_confidence: str | None
+    status: TargetStatus
+
+
+class TargetCustomerListResponse(BaseSchema):
+    target_customers: list[TargetCustomerResponse]
+
+
+class TargetCustomerCreateRequest(BaseSchema):
+    target_type: str = Field(min_length=1, max_length=20)
+    target_description: str = Field(min_length=1)
+
+
+class TargetCustomerCreateResponse(BaseSchema):
+    id: int
+    target_type: str | None
+    target_description: str | None
+    created_at: UtcDatetime
+
+
+class TargetCustomerUpdateRequest(BaseSchema):
+    target_type: str | None = Field(default=None, min_length=1, max_length=20)
+    target_description: str | None = Field(default=None, min_length=1)
+    status: TargetStatus | None = None
+
+
+class TargetCustomerUpdateResponse(BaseSchema):
+    """3.4 PATCH 응답 — 바꾼 필드만 (`exclude_unset`)."""
+
+    id: int
+    target_type: str | None = None
+    target_description: str | None = None
+    status: TargetStatus | None = None
+    updated_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 3.5 인사이트
+
+
+class InsightResponse(BaseSchema):
+    id: int
+    insight_type: str | None
+    insight_title: str | None
+    insight_content: str | None
+    insight_source: str | None
+    generated_at: UtcDatetime
+
+
+class InsightListResponse(BaseSchema):
+    insights: list[InsightResponse]

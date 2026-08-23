@@ -1,15 +1,19 @@
 """가게 등록·조회 로직 (API명세서 2.2, 2.3)."""
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
 from app.models.store import Store
+from app.models.store_insight import StoreInsight
+from app.models.store_menu import StoreMenu
 from app.models.user import User
 from app.schemas.store import (
     ImportItemStatus,
     ImportStatusItem,
     ImportStatusResponse,
     StoreCreateRequest,
+    StoreUpdateRequest,
 )
 
 
@@ -41,6 +45,19 @@ def create_store(db: Session, owner: User, payload: StoreCreateRequest) -> Store
     return store
 
 
+def update_store(db: Session, store: Store, payload: StoreUpdateRequest) -> Store:
+    """가게 정보를 부분 수정한다 (API명세서 3.1 PATCH).
+
+    요청에 담겨 온 필드만 반영한다. `exclude_unset=True`라서 아예 보내지 않은 필드와
+    `null`을 명시적으로 보낸 필드가 구분된다 — 후자는 값을 비우려는 의도로 본다.
+    """
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(store, field, value)
+    db.commit()
+    db.refresh(store)
+    return store
+
+
 def get_owned_store(db: Session, owner: User, store_id: int) -> Store:
     """본인 소유 가게를 가져온다.
 
@@ -60,21 +77,50 @@ def get_import_status(db: Session, store: Store) -> ImportStatusResponse:
     (결정: `docs/IMPLEMENTATION.md` 2026-08-23). 가게가 등록됐다는 것 자체가
     기본정보 수집 완료를 뜻하므로 기본정보는 항상 SUCCESS다.
 
-    메뉴·사진·상권분석은 각각 `store_menus`·`store_photos`·`store_insights`가
-    생기는 R03에서 실제 존재 여부로 바꾼다. 그 전까지는 수집된 적이 없으므로 PENDING이다.
+    메뉴는 `store_menus`, 상권분석은 `store_insights`(유형=상권분석)에 데이터가 있으면
+    SUCCESS다. **사진만 아직 `store_photos` 테이블이 없어 PENDING 고정**이며,
+    사진 업로드(3.3) 작업에서 같은 방식으로 연결한다.
     """
-    del db  # R03에서 메뉴·사진·인사이트 개수를 조회할 때 사용한다
-
     items = [
+        # 가게 레코드가 존재한다는 것 자체가 기본정보 수집 완료를 뜻한다
         ImportStatusItem(field="기본정보", status=ImportItemStatus.SUCCESS),
-        ImportStatusItem(field="메뉴", status=ImportItemStatus.PENDING),
+        ImportStatusItem(field="메뉴", status=_status_of(_has_menu(db, store))),
+        # store_photos 테이블은 아직 없다 — 사진 업로드(3.3) 작업에서 연결한다
         ImportStatusItem(field="사진", status=ImportItemStatus.PENDING),
-        ImportStatusItem(field="상권분석", status=ImportItemStatus.PENDING),
+        ImportStatusItem(field="상권분석", status=_status_of(_has_market_insight(db, store))),
     ]
     return ImportStatusResponse(
         store_id=store.id,
         overall_status=summarize_status([item.status for item in items]),
         items=items,
+    )
+
+
+MARKET_INSIGHT_TYPE = "상권분석"
+
+
+def _status_of(exists: bool) -> ImportItemStatus:
+    """데이터가 있으면 수집 완료, 없으면 아직 안 된 것으로 본다."""
+    return ImportItemStatus.SUCCESS if exists else ImportItemStatus.PENDING
+
+
+def _has_menu(db: Session, store: Store) -> bool:
+    return (
+        db.scalar(select(StoreMenu.id).where(StoreMenu.store_id == store.id).limit(1)) is not None
+    )
+
+
+def _has_market_insight(db: Session, store: Store) -> bool:
+    return (
+        db.scalar(
+            select(StoreInsight.id)
+            .where(
+                StoreInsight.store_id == store.id,
+                StoreInsight.insight_type == MARKET_INSIGHT_TYPE,
+            )
+            .limit(1)
+        )
+        is not None
     )
 
 

@@ -254,7 +254,7 @@ def test_import_status_returns_spec_shape(client: TestClient, auth_headers: dict
     assert [item["field"] for item in body["items"]] == ["기본정보", "메뉴", "사진", "상권분석"]
     # 가게가 등록됐다는 것 자체가 기본정보 수집 완료를 뜻한다
     assert body["items"][0]["status"] == "SUCCESS"
-    # 메뉴·사진·상권분석은 수집 기능(R03)이 붙기 전까지 PENDING이다
+    # 방금 등록해서 메뉴·사진·상권분석 데이터는 아직 없다
     assert {item["status"] for item in body["items"][1:]} == {"PENDING"}
 
 
@@ -424,3 +424,55 @@ def test_does_not_merge_same_road_different_building() -> None:
     )
 
     assert len(merged) == 2
+
+
+def test_import_status_reflects_actual_data(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session
+) -> None:
+    """상태를 저장하지 않고 실제 데이터 존재 여부로 계산한다.
+
+    메뉴를 등록하면 별도 상태 갱신 없이 곧바로 SUCCESS가 되어야 한다.
+    """
+    store_id = _create_store(client, auth_headers).json()["id"]
+
+    client.post(
+        f"/stores/{store_id}/menus", json={"name": "떡볶이", "price": 4000}, headers=auth_headers
+    )
+
+    items = {
+        item["field"]: item["status"]
+        for item in client.get(f"/stores/{store_id}/import-status", headers=auth_headers).json()[
+            "items"
+        ]
+    }
+    assert items["메뉴"] == "SUCCESS"
+    assert items["상권분석"] == "PENDING"
+    # 사진은 store_photos 테이블이 생기는 3.3 작업에서 연결된다
+    assert items["사진"] == "PENDING"
+
+
+def test_import_status_counts_only_market_insight(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session
+) -> None:
+    """상권분석 항목은 유형이 '상권분석'인 인사이트만 본다 — 카드뉴스가 있다고 켜지면 안 된다."""
+    from app.models.mixins import utcnow
+    from app.models.store_insight import StoreInsight
+
+    store_id = _create_store(client, auth_headers).json()["id"]
+    db_session.add(
+        StoreInsight(
+            store_id=store_id,
+            insight_type="카드뉴스",
+            insight_title="카드뉴스",
+            generated_at=utcnow(),
+        )
+    )
+    db_session.commit()
+
+    items = {
+        item["field"]: item["status"]
+        for item in client.get(f"/stores/{store_id}/import-status", headers=auth_headers).json()[
+            "items"
+        ]
+    }
+    assert items["상권분석"] == "PENDING"
