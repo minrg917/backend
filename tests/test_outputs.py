@@ -468,3 +468,42 @@ def test_store_shorts_hidden_from_other_user(
 
 def test_store_shorts_requires_authentication(client: TestClient, store_id: int) -> None:
     assert client.get(f"/stores/{store_id}/shorts").status_code == 401
+
+
+def test_publish_kit_includes_track_key(
+    client: TestClient, auth_headers: dict[str, str], project_id: int
+) -> None:
+    """음원 가이드 자리는 항상 응답에 있어야 한다.
+
+    값의 출처(포맷 고정 / AI 생성)는 아직 정해지지 않아 `null`이지만, **키가 빠지면
+    프론트가 키 존재 여부로 분기하게 된다.** 값이 채워지는 시점에 프론트를 다시
+    고치지 않도록 계약을 먼저 고정한다.
+    """
+    _edited_project(client, auth_headers, project_id)
+
+    kit = client.post(
+        f"/shorts-projects/{project_id}/outputs",
+        json={"target_platforms": ["INSTAGRAM"]},
+        headers=auth_headers,
+    ).json()["publish_kit"]
+
+    assert "track" in kit
+    assert kit["track"] is None
+
+
+def test_track_survives_get(
+    client: TestClient, auth_headers: dict[str, str], project_id: int
+) -> None:
+    """POST에서 저장한 음원 가이드가 GET에서도 같은 모양으로 나와야 한다."""
+    _edited_project(client, auth_headers, project_id)
+    posted = client.post(
+        f"/shorts-projects/{project_id}/outputs",
+        json={"target_platforms": ["INSTAGRAM"]},
+        headers=auth_headers,
+    ).json()["publish_kit"]
+
+    fetched = client.get(f"/shorts-projects/{project_id}/outputs", headers=auth_headers).json()[
+        "publish_kit"
+    ]
+
+    assert fetched == posted
