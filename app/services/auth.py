@@ -19,7 +19,7 @@ from app.core.security import (
 )
 from app.models.mixins import utcnow
 from app.models.user import User
-from app.schemas.auth import SignupRequest
+from app.schemas.auth import SignupRequest, UserProfileUpdateRequest
 
 logger = logging.getLogger(__name__)
 
@@ -122,3 +122,16 @@ def withdraw(db: Session, user: User, reason: str | None = None) -> datetime:
         logger.info("회원탈퇴 user_id=%s reason=%s", user.id, reason)
 
     return deleted_at
+
+
+def update_profile(db: Session, user: User, payload: UserProfileUpdateRequest) -> User:
+    """회원정보를 부분 수정한다 (API명세서 1.5 PATCH).
+
+    보낸 필드만 반영한다. 스키마가 `name`·`phone`·`marketing_agreed`만 받으므로
+    `email`이나 비밀번호가 섞여 와도 여기까지 오지 않는다.
+    """
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    db.commit()
+    db.refresh(user)
+    return user
