@@ -365,3 +365,24 @@ def test_insights_hidden_from_other_user(
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "STORE_NOT_FOUND"
+
+
+def test_list_includes_hidden_targets(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """숨김 타깃도 목록에 그대로 포함된다 (API명세서 3.4 노트, 2026-08-23 확정).
+
+    화면에서 숨길지는 프론트 판단이므로 서버가 걸러내면 안 된다.
+    """
+    target_id = _create_target(client, auth_headers, store_id).json()["id"]
+    client.patch(
+        f"/stores/{store_id}/target-customers/{target_id}",
+        json={"status": "HIDDEN"},
+        headers=auth_headers,
+    )
+
+    targets = client.get(f"/stores/{store_id}/target-customers", headers=auth_headers).json()[
+        "target_customers"
+    ]
+
+    assert [t["status"] for t in targets] == ["HIDDEN"]

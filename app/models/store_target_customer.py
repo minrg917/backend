@@ -11,11 +11,14 @@ from app.models.types import BigInt
 
 
 class TargetStatus(StrEnum):
-    """확인 상태.
+    """확인 상태 (2026-08-23 FE 확인 완료).
 
-    `SUGGESTED`/`CONFIRMED`는 API명세서 3.4 예시 기준이고, `HIDDEN`은 기능명세서
-    S03.5.2의 "숨김" 요구사항에 대응해 백엔드가 추정으로 넣은 값이다.
-    **실제 값 이름은 PM·프론트 확인 대기 중**(`docs/PM_DECISIONS.md` 「확인 대기 중」).
+    - `SUGGESTED`: AI가 제안했고 사장님 확인 대기
+    - `CONFIRMED`: 사장님이 "맞아요"로 확정
+    - `HIDDEN`: 사장님이 숨김 처리 (기능명세서 S03.5.2)
+
+    목록 조회(3.4 GET)는 `HIDDEN`도 **거르지 않고 그대로 내려준다** — 화면에서
+    숨길지는 프론트 판단이다(API명세서 3.4 노트).
     """
 
     SUGGESTED = "SUGGESTED"
