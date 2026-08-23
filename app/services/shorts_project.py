@@ -30,11 +30,6 @@ class InvalidPromotionDetail(BadRequestError):
     message = "홍보 목적에 맞지 않는 상세 정보입니다."
 
 
-class PromotionPurposeRequired(BadRequestError):
-    error_code = "PROMOTION_PURPOSE_REQUIRED"
-    message = "홍보 목적을 먼저 설정해야 상세 정보를 저장할 수 있습니다."
-
-
 class MenuNotAllowed(BadRequestError):
     error_code = "MENU_NOT_ALLOWED"
     message = "메뉴소개 목적일 때만 menu_id를 사용할 수 있습니다."
@@ -138,35 +133,30 @@ def update_project(
 ) -> ShortsProject:
     """프로젝트 설정을 부분 수정한다 (API명세서 4.2)."""
     changes = payload.model_dump(exclude_unset=True)
-
-    # 검증 기준이 되는 홍보 목적을 정한다.
-    # 이번 요청에 목적이 함께 왔으면 **새 목적**으로 검증해야 한다 — 목적과 상세를
-    # 한 번에 보내는 경우(목적 없이 만든 프로젝트를 채우는 흐름)에 저장된 옛 값으로
-    # 검증하면 방금 보낸 상세가 엉뚱한 스키마에 걸린다.
-    raw_purpose = changes.get("promotion_purpose", project.promotion_purpose)
-    # 홈 피드 경로로 만든 프로젝트는 홍보 목적이 없다(2026-08-23 선택 필드로 변경).
-    # 목적을 모르면 promotion_detail을 어떤 구조로 검증할지 알 수 없다.
-    purpose = PromotionPurpose(raw_purpose) if raw_purpose else None
-
-    needs_purpose = changes.get("promotion_detail") is not None or (
-        changes.get("menu_id") is not None
-    )
-    if purpose is None and needs_purpose:
-        raise PromotionPurposeRequired
+    # 목적은 4.1에서 필수로 받으므로 여기서는 항상 값이 있다. 4.1이 잠시 선택이었던
+    # 기간에 만들어진 row만 NULL일 수 있어 방어적으로 처리한다.
+    purpose = PromotionPurpose(project.promotion_purpose) if project.promotion_purpose else None
 
     if "menu_id" in changes and changes["menu_id"] is not None:
         # menu_id는 메뉴소개 전용이다. 다른 목적에 넣으면 의미가 없고,
         # 조용히 무시하면 프론트는 저장된 줄 알게 된다.
         if purpose is not PromotionPurpose.MENU:
+            label = purpose.value if purpose else "미설정"
             raise MenuNotAllowed(
-                f"홍보 목적이 '{purpose.value}'인 프로젝트에는 menu_id를 지정할 수 없습니다."
-            )  # purpose는 위에서 None이 걸러졌다
+                f"홍보 목적이 '{label}'인 프로젝트에는 menu_id를 지정할 수 없습니다."
+            )
         _validate_menu(db, project, changes["menu_id"])
 
     if changes.get("store_target_customer_id") is not None:
         _validate_target(db, project, changes["store_target_customer_id"])
 
     if changes.get("promotion_detail") is not None:
+        if purpose is None:
+            # 4.1이 잠시 선택이었던 기간의 잔여 데이터. 목적을 모르면 어떤 구조로
+            # 검증할지 알 수 없어 500으로 깨지는 대신 명시적으로 막는다.
+            raise InvalidPromotionDetail(
+                "홍보 목적이 없는 프로젝트입니다. 프로젝트를 새로 만들어 주세요."
+            )
         changes["promotion_detail"] = _validate_promotion_detail(
             purpose, changes["promotion_detail"]
         )

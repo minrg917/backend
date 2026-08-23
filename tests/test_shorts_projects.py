@@ -425,26 +425,33 @@ def test_unknown_project_returns_404(client: TestClient, auth_headers: dict[str,
     assert response.json()["error_code"] == "PROJECT_NOT_FOUND"
 
 
-# ---------------------------------------------------------------- 4.1 promotion_purpose 선택
+# ---------------------------------------------------------------- 4.1 promotion_purpose 필수
 
 
-def test_create_project_without_promotion_purpose(
+def test_create_project_requires_promotion_purpose(
     client: TestClient, auth_headers: dict[str, str], store_id: int
 ) -> None:
-    """홈 피드에서 포맷을 고르는 경로는 홍보 목적을 묻지 않는다(2026-08-23 선택 필드로 변경)."""
+    """홈 피드 진입에도 목적 선택 화면을 두기로 확정(2026-08-23) — 목적은 필수다.
+
+    한때 선택으로 완화했다가 되돌린 계약이라, 회귀하지 않도록 테스트로 고정한다.
+    """
     response = client.post("/shorts-projects", json={"store_id": store_id}, headers=auth_headers)
 
-    assert response.status_code == 201, response.text
-    assert response.json()["promotion_purpose"] is None
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "VALIDATION_ERROR"
+    assert "promotion_purpose" in body["message"]
 
 
-def test_purpose_can_be_filled_in_later(
+def test_purpose_cannot_be_changed_after_creation(
     client: TestClient, auth_headers: dict[str, str], store_id: int
 ) -> None:
-    """목적 없이 만든 프로젝트도 나중에 4.2로 채울 수 있어야 한다."""
-    project_id = client.post(
-        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
-    ).json()["id"]
+    """목적은 생성 후 바꿀 수 없다(2026-08-23 확정).
+
+    4.2가 `promotion_purpose`를 받지 않으므로 보내도 무시되고 원래 값이 유지된다.
+    바꾸고 싶으면 프로젝트를 새로 만든다.
+    """
+    project_id = _create_project(client, auth_headers, store_id, "메뉴소개")
 
     response = client.patch(
         f"/shorts-projects/{project_id}",
@@ -453,53 +460,13 @@ def test_purpose_can_be_filled_in_later(
     )
 
     assert response.status_code == 200
-    assert response.json()["promotion_purpose"] == "가게소개"
+    assert response.json()["promotion_purpose"] == "메뉴소개"
 
 
-def test_promotion_detail_without_purpose_is_rejected(
+def test_settings_unrelated_to_purpose_still_work(
     client: TestClient, auth_headers: dict[str, str], store_id: int
 ) -> None:
-    """목적을 모르면 promotion_detail을 어떤 구조로 검증할지 알 수 없다.
-
-    500으로 깨지는 대신 400으로 막고 무엇을 해야 하는지 알려준다.
-    """
-    project_id = client.post(
-        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
-    ).json()["id"]
-
-    response = client.patch(
-        f"/shorts-projects/{project_id}",
-        json={"promotion_detail": {"elements": ["공간"]}},
-        headers=auth_headers,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "PROMOTION_PURPOSE_REQUIRED"
-
-
-def test_menu_id_without_purpose_is_rejected(
-    client: TestClient, auth_headers: dict[str, str], store_id: int
-) -> None:
-    project_id = client.post(
-        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
-    ).json()["id"]
-    menu_id = _create_menu(client, auth_headers, store_id)
-
-    response = client.patch(
-        f"/shorts-projects/{project_id}", json={"menu_id": menu_id}, headers=auth_headers
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "PROMOTION_PURPOSE_REQUIRED"
-
-
-def test_other_settings_work_without_purpose(
-    client: TestClient, auth_headers: dict[str, str], store_id: int
-) -> None:
-    """목적과 무관한 설정(얼굴노출·촬영조건)은 목적이 없어도 저장된다."""
-    project_id = client.post(
-        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
-    ).json()["id"]
+    project_id = _create_project(client, auth_headers, store_id, "가게소개")
 
     response = client.patch(
         f"/shorts-projects/{project_id}",
@@ -511,43 +478,20 @@ def test_other_settings_work_without_purpose(
     assert response.json()["face_exposure_mode"] == "비노출"
 
 
-def test_purpose_and_detail_in_one_request(
+def test_video_format_id_in_patch_is_ignored(
     client: TestClient, auth_headers: dict[str, str], store_id: int
 ) -> None:
-    """목적과 상세를 한 번에 보내면 **새 목적** 기준으로 검증해야 한다.
+    """포맷 선택은 7.1에서만 저장한다 — 4.2로 보내도 반영되지 않는다.
 
-    저장된 옛 값(여기서는 null)으로 검증하면 방금 보낸 상세가 통째로 거부된다.
+    프론트가 한때 4.2로도 보내고 있었는데 스키마에 없어 조용히 버려지고 있었다.
+    그 동작이 유지되는지(=엉뚱하게 저장되지 않는지) 고정한다.
     """
-    project_id = client.post(
-        "/shorts-projects", json={"store_id": store_id}, headers=auth_headers
-    ).json()["id"]
-
-    response = client.patch(
-        f"/shorts-projects/{project_id}",
-        json={
-            "promotion_purpose": "가게소개",
-            "promotion_detail": {"elements": ["공간", "사장님/직원"]},
-        },
-        headers=auth_headers,
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["promotion_purpose"] == "가게소개"
-    assert body["promotion_detail"] == {"elements": ["공간", "사장님/직원"]}
-
-
-def test_changing_purpose_validates_against_new_purpose(
-    client: TestClient, auth_headers: dict[str, str], store_id: int
-) -> None:
-    """목적을 바꾸면서 옛 목적의 상세를 보내면 거부돼야 한다."""
     project_id = _create_project(client, auth_headers, store_id, "메뉴소개")
 
     response = client.patch(
-        f"/shorts-projects/{project_id}",
-        json={"promotion_purpose": "가게소개", "promotion_detail": {"detail_tag": "대표메뉴"}},
-        headers=auth_headers,
+        f"/shorts-projects/{project_id}", json={"video_format_id": 71}, headers=auth_headers
     )
 
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "INVALID_PROMOTION_DETAIL"
+    assert response.status_code == 200
+    detail = client.get(f"/shorts-projects/{project_id}", headers=auth_headers).json()
+    assert detail["video_format_id"] is None
