@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field
 
-from app.models.shooting_task import TaskStatus
+from app.models.shooting_task import FootageType, TaskStatus
 from app.models.shorts_project import PromotionPurpose, ShortsStatus
 from app.schemas.common import BaseSchema, UtcDatetime
 
@@ -286,3 +286,74 @@ class TaskStatusUpdateResponse(BaseSchema):
     id: int
     task_status: TaskStatus
     updated_at: UtcDatetime
+
+
+# ---------------------------------------------------------------- 9.1 촬영 가이드
+
+
+class GuideType(StrEnum):
+    OVERLAY = "OVERLAY"
+    DANCE = "DANCE"
+    BROLL = "BROLL"
+
+
+class OverlayGuide(BaseSchema):
+    # AI 연동 전까지 빈 배열이다 — 지어내면 가짜 안내가 진짜처럼 보인다
+    instructions: list[str]
+
+
+class ReferenceVideo(BaseSchema):
+    """댄스·안무 가이드용 원본 영상.
+
+    포맷 하나당 하나이므로 태스크별로 저장하지 않고 `video_formats`에서 가져온다
+    (`docs/PM_DECISIONS.md` 2026-08-21 R10 항목).
+    """
+
+    reference_url: str
+    source_platform: str | None
+
+
+class BrollShot(BaseSchema):
+    # shot_type은 storyboard_scenes에서 가져온다(태스크에 중복 저장하지 않는다)
+    shot_type: str | None
+    distance: str | None
+    angle: str | None
+
+
+class TaskGuideResponse(BaseSchema):
+    guide_type: GuideType
+    overlay: OverlayGuide | None
+    reference_video: ReferenceVideo | None
+    broll_shot: BrollShot | None
+
+
+# ---------------------------------------------------------------- 9.2 촬영본 업로드
+
+
+class FootageUploadResponse(BaseSchema):
+    task_id: int
+    file_url: str
+    footage_type: FootageType
+    footage_duration_sec: int | None
+    task_status: TaskStatus
+
+
+# ---------------------------------------------------------------- 9.3 자동저장
+
+
+class DraftResponse(BaseSchema):
+    project_id: int
+    # 한 번도 저장한 적 없으면 둘 다 null
+    last_saved_at: UtcDatetime | None
+    current_step: str | None
+
+
+class DraftSaveRequest(BaseSchema):
+    current_step: str | None = Field(default=None, max_length=30)
+    # 서버는 내용을 해석하지 않고 그대로 보관했다 돌려준다
+    client_state: dict[str, Any] | None = None
+
+
+class DraftSaveResponse(BaseSchema):
+    message: str
+    last_saved_at: UtcDatetime

@@ -30,9 +30,12 @@ class PhotoNotFound(NotFoundError):
 
 
 class UnsupportedFileType(AppError):
+    """사진(3.3)과 촬영본(9.2)이 함께 쓴다 — 기본 문구는 중립적으로 두고
+    호출부가 상황에 맞는 안내를 넘긴다."""
+
     status_code = HTTPStatus.UNSUPPORTED_MEDIA_TYPE
     error_code = "UNSUPPORTED_FILE_TYPE"
-    message = "지원하지 않는 파일 형식입니다. 이미지 파일만 업로드할 수 있습니다."
+    message = "지원하지 않는 파일 형식입니다."
 
 
 class FileTooLarge(AppError):
@@ -54,15 +57,25 @@ def list_photos(db: Session, store: Store, category: str | None = None) -> list[
     return list(db.scalars(statement.order_by(StorePhoto.id)))
 
 
-def _validate(upload: UploadFile) -> str:
+def validate_upload(
+    upload: UploadFile,
+    allowed_types: set[str],
+    extensions: dict[str, str],
+    max_bytes: int,
+    limit_mb: int,
+    unsupported_message: str,
+) -> str:
     """업로드 파일을 검사하고 저장할 확장자를 돌려준다.
+
+    사진(3.3)과 촬영본(9.2)이 같은 규칙을 다른 설정으로 쓴다 — 허용 형식과 크기
+    제한만 다르고 검사 방식은 동일하다.
 
     콘텐츠 타입은 클라이언트가 보낸 값이라 완전히 믿을 수는 없지만, 확장자를 원본
     파일명에서 가져오는 것보다는 낫다(경로 조작·한글 파일명·이중 확장자 회피).
     """
     content_type = (upload.content_type or "").lower()
-    if content_type not in settings.allowed_image_type_set or content_type not in _EXTENSIONS:
-        raise UnsupportedFileType
+    if content_type not in allowed_types or content_type not in extensions:
+        raise UnsupportedFileType(unsupported_message)
 
     # SpooledTemporaryFile이라 seek이 가능하다 — 전체를 메모리에 읽지 않고 크기를 잰다
     upload.file.seek(0, os.SEEK_END)
@@ -71,10 +84,21 @@ def _validate(upload: UploadFile) -> str:
 
     if size == 0:
         raise EmptyFile
-    if size > settings.max_upload_size_bytes:
-        limit = settings.MAX_UPLOAD_SIZE_MB
-        raise FileTooLarge(f"파일 크기가 너무 큽니다. 최대 {limit}MB까지 업로드할 수 있습니다.")
-    return _EXTENSIONS[content_type]
+    if size > max_bytes:
+        raise FileTooLarge(f"파일 크기가 너무 큽니다. 최대 {limit_mb}MB까지 업로드할 수 있습니다.")
+    return extensions[content_type]
+
+
+def _validate(upload: UploadFile) -> str:
+    """가게 사진 업로드 검사."""
+    return validate_upload(
+        upload,
+        allowed_types=settings.allowed_image_type_set,
+        extensions=_EXTENSIONS,
+        max_bytes=settings.max_upload_size_bytes,
+        limit_mb=settings.MAX_UPLOAD_SIZE_MB,
+        unsupported_message="지원하지 않는 파일 형식입니다. 이미지 파일만 업로드할 수 있습니다.",
+    )
 
 
 def create_photo(

@@ -18,6 +18,7 @@ AI는 **콘티(`scenes`)와 촬영 태스크(`tasks`)를 함께** 내려준다(2
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.core.config import settings
 from app.models.store import Store
@@ -49,6 +50,8 @@ class PlannedTask:
     task_title: str
     task_type: str | None = None
     scene_index: int | None = None
+    # 촬영 안내 (9.1). guide_type / instructions / broll_shot 를 담는다.
+    guide: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,12 @@ def _placeholder_plan(store: Store, video_format: VideoFormat) -> ShootingPlan:
             task_title=f"{scene.scene_description} 촬영",
             task_type="영상촬영",
             scene_index=index,
+            guide={
+                "guide_type": "OVERLAY",
+                # ⚠️ 비워둔다. AI 없이 지어내면 가짜 안내가 진짜처럼 보인다.
+                "instructions": [],
+                "broll_shot": {"distance": None, "angle": None},
+            },
         )
         for index, scene in enumerate(scenes)
     ]

@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # 업로드 제한 — 사진은 원본을 그대로 받되 상식적인 상한을 둔다
     MAX_UPLOAD_SIZE_MB: int = 10
     ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png,image/webp,image/heic"
+    # 촬영본(영상)은 사진보다 훨씬 크다. 사진 제한을 그대로 쓰면 정상 촬영분도 막힌다.
+    MAX_VIDEO_UPLOAD_SIZE_MB: int = 200
+    ALLOWED_VIDEO_TYPES: str = "video/mp4,video/quicktime,video/x-m4v,video/webm"
 
     @property
     def database_url(self) -> str:
@@ -93,6 +96,16 @@ class Settings(BaseSettings):
     def allowed_image_type_set(self) -> set[str]:
         return {
             item.strip().lower() for item in self.ALLOWED_IMAGE_TYPES.split(",") if item.strip()
+        }
+
+    @property
+    def max_video_upload_size_bytes(self) -> int:
+        return self.MAX_VIDEO_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def allowed_video_type_set(self) -> set[str]:
+        return {
+            item.strip().lower() for item in self.ALLOWED_VIDEO_TYPES.split(",") if item.strip()
         }
 
     @property
