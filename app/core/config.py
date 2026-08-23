@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # 애플리케이션
     APP_NAME: str = "사릴스(SARILS) API"
     DEBUG: bool = False
+    # 로그 레벨. 운영에서는 INFO, 조사할 때만 DEBUG로 내린다.
+    LOG_LEVEL: str = "INFO"
 
     # 데이터베이스
     DB_HOST: str = "localhost"

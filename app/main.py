@@ -9,6 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
+from app.core.logging import configure_logging, register_request_logging
+
+configure_logging()
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -25,6 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_request_logging(app)
 register_error_handlers(app)
 app.include_router(api_router)
 
