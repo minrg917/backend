@@ -76,3 +76,36 @@ class WithdrawRequest(BaseSchema):
 class WithdrawResponse(BaseSchema):
     message: str
     deleted_at: UtcDatetime
+
+
+class UserProfileResponse(BaseSchema):
+    """1.5 GET — 회원정보 조회."""
+
+    id: int
+    email: str
+    name: str
+    phone: str | None
+    marketing_agreed: bool
+    created_at: UtcDatetime
+
+
+class UserProfileUpdateRequest(BaseSchema):
+    """1.5 PATCH — 회원정보 수정.
+
+    `email`(로그인 식별자)과 비밀번호는 여기서 바꾸지 않는다. `terms_agreed`도
+    철회 개념이 아니라 제외했다 — 철회는 탈퇴(`DELETE /users/me`)다.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    marketing_agreed: bool | None = None
+
+
+class UserProfileUpdateResponse(BaseSchema):
+    """바꾼 필드 + id + updated_at만 담는다 (3.1·3.2·3.4와 같은 방식)."""
+
+    id: int
+    name: str | None = None
+    phone: str | None = None
+    marketing_agreed: bool | None = None
+    updated_at: UtcDatetime

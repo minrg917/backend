@@ -256,3 +256,78 @@ def test_withdrawn_user_cannot_use_access_token(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.json()["error_code"] == "INACTIVE_USER"
+
+
+# ---------------------------------------------------------------- 1.5 회원정보 조회 / 수정
+
+
+def test_get_profile_returns_spec_fields(client: TestClient) -> None:
+    tokens = _login_tokens(client)
+
+    response = client.get("/users/me", headers=_auth_header(tokens["access_token"]))
+
+    assert response.status_code == 200
+    assert set(response.json()) == {
+        "id",
+        "email",
+        "name",
+        "phone",
+        "marketing_agreed",
+        "created_at",
+    }
+
+
+def test_patch_profile_returns_only_changed_fields(client: TestClient) -> None:
+    tokens = _login_tokens(client)
+
+    response = client.patch(
+        "/users/me",
+        json={"name": "박사장"},
+        headers=_auth_header(tokens["access_token"]),
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"id", "name", "updated_at"}
+    assert response.json()["name"] == "박사장"
+
+
+def test_patch_profile_updates_allowed_fields(client: TestClient) -> None:
+    tokens = _login_tokens(client)
+    headers = _auth_header(tokens["access_token"])
+
+    client.patch(
+        "/users/me",
+        json={"name": "박사장", "phone": "01099998888", "marketing_agreed": True},
+        headers=headers,
+    )
+
+    profile = client.get("/users/me", headers=headers).json()
+    assert profile["name"] == "박사장"
+    assert profile["phone"] == "01099998888"
+    assert profile["marketing_agreed"] is True
+
+
+def test_patch_profile_cannot_change_email(client: TestClient) -> None:
+    """email은 로그인 식별자라 수정 대상이 아니다 — 보내도 무시된다."""
+    tokens = _login_tokens(client)
+    headers = _auth_header(tokens["access_token"])
+
+    client.patch("/users/me", json={"email": "hacked@example.com"}, headers=headers)
+
+    assert client.get("/users/me", headers=headers).json()["email"] == SIGNUP_BODY["email"]
+
+
+def test_patch_profile_leaves_unsent_fields(client: TestClient) -> None:
+    tokens = _login_tokens(client)
+    headers = _auth_header(tokens["access_token"])
+
+    client.patch("/users/me", json={"marketing_agreed": True}, headers=headers)
+
+    profile = client.get("/users/me", headers=headers).json()
+    assert profile["marketing_agreed"] is True
+    assert profile["name"] == SIGNUP_BODY["name"]  # 안 보낸 필드는 그대로
+
+
+def test_profile_requires_authentication(client: TestClient) -> None:
+    assert client.get("/users/me").status_code == 401
+    assert client.patch("/users/me", json={"name": "x"}).status_code == 401
