@@ -21,8 +21,11 @@ from app.schemas.shorts_project import (
     SceneResponse,
     SceneUpdateRequest,
     SceneUpdateResponse,
+    TaskBoardResponse,
+    TaskSummary,
 )
 from app.services import plan as plan_service
+from app.services import shooting_task as task_service
 from app.services import shorts_project as project_service
 
 router = APIRouter(prefix="/shorts-projects", tags=["shorts-projects"])
@@ -119,3 +122,22 @@ def update_scenes(
     project = project_service.get_owned_project(db, user, project_id)
     updated = plan_service.update_scenes(db, project, payload)
     return SceneUpdateResponse(message="콘티가 수정되었습니다.", updated_count=updated)
+
+
+# ---------------------------------------------------------------- 8.1 태스크 보드
+
+
+@router.get("/{project_id}/tasks", response_model=TaskBoardResponse)
+def list_tasks(project_id: int, user: CurrentUser, db: DbSession) -> TaskBoardResponse:
+    """촬영 태스크 보드를 돌려준다.
+
+    태스크는 7.1(기획 생성)에서 콘티와 함께 만들어진다 — 태스크를 만드는 별도
+    API는 없다. 7.1을 호출한 적 없으면 빈 목록이다.
+    """
+    project = project_service.get_owned_project(db, user, project_id)
+    tasks = task_service.list_tasks(db, project)
+    return TaskBoardResponse(
+        progress_rate=task_service.calculate_progress_rate(tasks),
+        estimated_remaining_min=task_service.estimate_remaining_min(project, tasks),
+        tasks=[TaskSummary.model_validate(task) for task in tasks],
+    )

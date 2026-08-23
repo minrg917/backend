@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field
 
+from app.models.shooting_task import TaskStatus
 from app.models.shorts_project import PromotionPurpose, ShortsStatus
 from app.schemas.common import BaseSchema, UtcDatetime
 
@@ -254,3 +255,34 @@ class SceneUpdateRequest(BaseSchema):
 class SceneUpdateResponse(BaseSchema):
     message: str
     updated_count: int
+
+
+# ---------------------------------------------------------------- 8.1 / 8.2 촬영 태스크
+
+
+class TaskSummary(BaseSchema):
+    id: int
+    scene_id: int | None
+    task_type: str | None
+    task_title: str | None
+    task_status: TaskStatus
+    display_order: int
+
+
+class TaskBoardResponse(BaseSchema):
+    """태스크 보드 (API명세서 8.1)."""
+
+    progress_rate: int
+    # 7.1을 호출한 적 없거나 태스크가 없으면 null
+    estimated_remaining_min: int | None
+    tasks: list[TaskSummary]
+
+
+class TaskStatusUpdateRequest(BaseSchema):
+    task_status: TaskStatus
+
+
+class TaskStatusUpdateResponse(BaseSchema):
+    id: int
+    task_status: TaskStatus
+    updated_at: UtcDatetime

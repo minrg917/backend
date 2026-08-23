@@ -10,6 +10,9 @@
 - **실패 격리**: AI가 죽어도 앱이 통째로 죽지 않게 한다.
 - **교체 용이**: 동기/비동기 전환도 여기만 바꾸면 된다.
 
+AI는 **콘티(`scenes`)와 촬영 태스크(`tasks`)를 함께** 내려준다(2026-08-23 확정).
+태스크를 만드는 별도 API는 없고 7.1이 둘 다 생성한다.
+
 ⚠️ **임시 결과는 진짜 기획이 아니다.** 포맷·가게에 상관없이 같은 뼈대를 돌려주며,
 `is_placeholder=True`로 표시된다. 화면에서 "AI 준비 중"을 안내하는 데 쓸 수 있다.
 """
@@ -34,6 +37,21 @@ class PlannedScene:
 
 
 @dataclass(frozen=True)
+class PlannedTask:
+    """AI가 쪼갠 촬영 태스크 하나 (기능명세서 S08.1.1).
+
+    `scene_index`는 `ShootingPlan.scenes`의 몇 번째 장면에서 나온 태스크인지를
+    가리킨다. 장면이 아직 DB에 저장되기 전이라 실제 `scene_id`를 알 수 없어,
+    저장 시점에 호출부가 매핑한다.
+    """
+
+    display_order: int
+    task_title: str
+    task_type: str | None = None
+    scene_index: int | None = None
+
+
+@dataclass(frozen=True)
 class ShootingPlan:
     """AI 기획 결과 전체 (API명세서 7.1)."""
 
@@ -42,6 +60,7 @@ class ShootingPlan:
     props: list[str] = field(default_factory=list)
     difficulty: str | None = None
     scenes: list[PlannedScene] = field(default_factory=list)
+    tasks: list[PlannedTask] = field(default_factory=list)
     # 실제 AI가 만든 결과가 아니라 임시 뼈대라는 표시
     is_placeholder: bool = False
 
@@ -103,6 +122,18 @@ def _placeholder_plan(store: Store, video_format: VideoFormat) -> ShootingPlan:
             target_duration_sec=duration - per_scene * 3,
         ),
     ]
+    # 임시 태스크는 장면 하나당 하나로 만든다. 실제로는 AI가 "영상촬영 / 대사 /
+    # B-roll / 텍스트 확인" 같은 유형으로 쪼갠다(기능명세서 S08.1.1).
+    tasks = [
+        PlannedTask(
+            display_order=scene.scene_order,
+            task_title=f"{scene.scene_description} 촬영",
+            task_type="영상촬영",
+            scene_index=index,
+        )
+        for index, scene in enumerate(scenes)
+    ]
+
     return ShootingPlan(
         # 촬영은 완성 길이보다 오래 걸린다는 가정. 실제 값은 AI가 판단한다.
         estimated_shooting_sec=duration * 10,
@@ -110,5 +141,6 @@ def _placeholder_plan(store: Store, video_format: VideoFormat) -> ShootingPlan:
         props=["삼각대"],
         difficulty=video_format.shooting_difficulty,
         scenes=scenes,
+        tasks=tasks,
         is_placeholder=True,
     )

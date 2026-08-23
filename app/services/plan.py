@@ -4,6 +4,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError
+from app.models.shooting_task import ShootingTask, TaskStatus
 from app.models.shorts_project import ShortsProject
 from app.models.store import Store
 from app.models.storyboard_scene import StoryboardScene
@@ -23,8 +24,11 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
     **`video_format_id`를 저장하는 유일한 경로다**(2026-08-23 확정). 4.2 PATCH에는
     이 필드가 없다.
 
-    **재호출하면 기존 장면을 지우고 새로 넣는다.** 포맷을 바꿔 다시 만들었을 때
-    옛 장면이 남아 섞이면 촬영 태스크(R08)까지 잘못된 데이터가 흘러간다.
+    **콘티와 촬영 태스크를 함께 만든다** — 태스크 생성 API가 따로 없고, 기능명세서
+    S08.1.1이 "선택 포맷과 콘티를 분해한다"고 규정한다.
+
+    **재호출하면 기존 장면·태스크를 지우고 새로 넣는다.** 포맷을 바꿔 다시 만들었을 때
+    옛 데이터가 남아 섞이면 사장님이 찍지 않아도 될 컷을 찍게 된다.
     """
     video_format = get_format(db, video_format_id)  # 없는 포맷이면 404
     store = db.get(Store, project.store_id)
@@ -32,9 +36,12 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
 
     plan = ai_client.generate_plan(store, video_format)
 
-    # 기존 장면 제거 후 재생성. 같은 트랜잭션에서 처리해 중간 상태가 남지 않게 한다.
+    # 기존 장면·태스크 제거 후 재생성. 같은 트랜잭션에서 처리해 중간 상태가 남지 않게 한다.
+    # 태스크를 함께 지우지 않으면 옛 포맷의 태스크가 남아 찍지 않아도 될 컷을 찍게 된다.
+    db.execute(delete(ShootingTask).where(ShootingTask.shorts_project_id == project.id))
     db.execute(delete(StoryboardScene).where(StoryboardScene.shorts_project_id == project.id))
-    db.add_all(
+
+    scenes = [
         StoryboardScene(
             shorts_project_id=project.id,
             scene_order=scene.scene_order,
@@ -45,6 +52,25 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
             target_duration_sec=scene.target_duration_sec,
         )
         for scene in plan.scenes
+    ]
+    db.add_all(scenes)
+    # 태스크가 장면을 FK로 참조하므로 id를 먼저 확보한다.
+    db.flush()
+
+    db.add_all(
+        ShootingTask(
+            shorts_project_id=project.id,
+            scene_id=(
+                scenes[task.scene_index].id
+                if task.scene_index is not None and task.scene_index < len(scenes)
+                else None
+            ),
+            task_type=task.task_type,
+            task_title=task.task_title,
+            task_status=TaskStatus.NOT_STARTED,
+            display_order=task.display_order,
+        )
+        for task in plan.tasks
     )
 
     project.video_format_id = video_format.id
