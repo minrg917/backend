@@ -1,0 +1,56 @@
+[
+  {
+    "format_title": "가격 공개 반전 챌린지",
+    "format_type": "밈",
+    "reference_url": "https://www.youtube.com/watch?v=SEED0000001",
+    "source_platform": "YOUTUBE",
+    "expected_duration_sec": 25,
+    "shooting_difficulty": "하",
+    "face_exposure_level": "낮음"
+  },
+  {
+    "format_title": "손만 나오는 제조과정 ASMR",
+    "format_type": "밈",
+    "reference_url": "https://www.youtube.com/watch?v=SEED0000002",
+    "source_platform": "YOUTUBE",
+    "expected_duration_sec": 30,
+    "shooting_difficulty": "하",
+    "face_exposure_level": "없음"
+  },
+  {
+    "format_title": "사장님이 직접 말하는 메뉴 추천",
+    "format_type": "잔잔한 소개",
+    "reference_url": "https://www.youtube.com/watch?v=SEED0000003",
+    "source_platform": "YOUTUBE",
+    "expected_duration_sec": 45,
+    "shooting_difficulty": "중",
+    "face_exposure_level": "높음"
+  },
+  {
+    "format_title": "가게 한 바퀴 둘러보기",
+    "format_type": "잔잔한 소개",
+    "reference_url": "https://www.youtube.com/watch?v=SEED0000004",
+    "source_platform": "YOUTUBE",
+    "expected_duration_sec": 40,
+    "shooting_difficulty": "하",
+    "face_exposure_level": "낮음"
+  },
+  {
+    "format_title": "메뉴 두 개 비교 대결",
+    "format_type": "밈",
+    "reference_url": "https://www.youtube.com/watch?v=SEED0000005",
+    "source_platform": "YOUTUBE",
+    "expected_duration_sec": 20,
+    "shooting_difficulty": "중",
+    "face_exposure_level": "낮음"
+  },
+  {
+    "format_title": "이벤트 알리는 짧은 공지컷",
+    "format_type": "잔잔한 소개",
+    "reference_url": "https://www.youtube.com/watch?v=SEED0000006",
+    "source_platform": "YOUTUBE",
+    "expected_duration_sec": 15,
+    "shooting_difficulty": "하",
+    "face_exposure_level": "없음"
+  }
+]

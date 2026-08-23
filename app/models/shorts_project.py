@@ -49,9 +49,11 @@ class ShortsProject(Base, TimestampMixin):
         index=True,
         comment="가게 ID(작성자는 store_id -> stores.user_id로 도출)",
     )
-    # video_formats 테이블은 R05에서 생긴다. 그 전까지 FK 없이 컬럼만 둔다.
     video_format_id: Mapped[int | None] = mapped_column(
-        BigInt, nullable=True, comment="선택한 포맷 ID"
+        BigInt,
+        ForeignKey("video_formats.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="선택한 포맷 ID",
     )
     store_target_customer_id: Mapped[int | None] = mapped_column(
         BigInt,
