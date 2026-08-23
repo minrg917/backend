@@ -52,6 +52,19 @@ class Settings(BaseSettings):
     # 외부 API 호출 타임아웃(초). 한쪽이 느려도 검색 전체가 지연되지 않게 짧게 잡는다.
     EXTERNAL_API_TIMEOUT_SECONDS: float = 3.0
 
+    # 파일 저장소 — 배포 시 "s3" 구현을 추가하고 이 값만 바꾼다
+    STORAGE_BACKEND: str = "local"
+    # 로컬 저장 루트(.gitignore에 포함). 상대 경로면 프로젝트 루트 기준.
+    MEDIA_ROOT: str = "media"
+    # 정적 서빙 경로와, 응답 URL을 만들 때 앞에 붙일 주소.
+    # 배포 시 MEDIA_BASE_URL을 실제 도메인(또는 S3/CDN 주소)으로 바꾼다.
+    MEDIA_URL_PATH: str = "/media"
+    MEDIA_BASE_URL: str = "http://localhost:8000"
+
+    # 업로드 제한 — 사진은 원본을 그대로 받되 상식적인 상한을 둔다
+    MAX_UPLOAD_SIZE_MB: int = 10
+    ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png,image/webp,image/heic"
+
     @property
     def database_url(self) -> str:
         return (
@@ -66,6 +79,16 @@ class Settings(BaseSettings):
     @property
     def kakao_search_enabled(self) -> bool:
         return bool(self.KAKAO_REST_API_KEY)
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def allowed_image_type_set(self) -> set[str]:
+        return {
+            item.strip().lower() for item in self.ALLOWED_IMAGE_TYPES.split(",") if item.strip()
+        }
 
     @property
     def cors_origin_list(self) -> list[str]:

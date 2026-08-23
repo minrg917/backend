@@ -4,7 +4,7 @@ from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated, TypeVar
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession
@@ -17,6 +17,9 @@ from app.schemas.store import (
     MenuListResponse,
     MenuUpdateRequest,
     MenuUpdateResponse,
+    PhotoCategory,
+    PhotoListResponse,
+    PhotoResponse,
     StoreCreateRequest,
     StoreCreateResponse,
     StoreDetailResponse,
@@ -32,8 +35,10 @@ from app.schemas.store import (
 from app.services import store as store_service
 from app.services import store_insight as insight_service
 from app.services import store_menu as menu_service
+from app.services import store_photo as photo_service
 from app.services import store_search
 from app.services import store_target_customer as target_service
+from app.storage import Storage, get_storage, to_public_url
 
 router = APIRouter(prefix="/stores", tags=["stores"])
 
@@ -220,3 +225,60 @@ def list_insights(
     """가게 인사이트를 최신순으로 돌려준다. `type`을 주면 해당 유형만 거른다."""
     store = store_service.get_owned_store(db, user, store_id)
     return InsightListResponse(insights=insight_service.list_insights(db, store, type))
+
+
+# ---------------------------------------------------------------- 3.3 가게사진
+
+StorageDep = Annotated[Storage, Depends(get_storage)]
+
+
+def _photo_response(storage: Storage, photo: object) -> PhotoResponse:
+    """DB에는 저장소 키가 들어있으므로 응답에서 전체 URL로 바꿔 내보낸다."""
+    return PhotoResponse(
+        id=photo.id,
+        file_url=to_public_url(storage, photo.file_url) or "",
+        category=photo.category,
+        has_sensitive_info=photo.has_sensitive_info,
+        created_at=photo.created_at,
+    )
+
+
+@router.get("/{store_id}/photos", response_model=PhotoListResponse)
+def list_photos(
+    store_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
+    category: Annotated[str | None, Query(description="사진 분류(간판/외관/내부 등)")] = None,
+) -> PhotoListResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    photos = photo_service.list_photos(db, store, category)
+    return PhotoListResponse(photos=[_photo_response(storage, photo) for photo in photos])
+
+
+@router.post("/{store_id}/photos", response_model=PhotoResponse, status_code=HTTPStatus.CREATED)
+def upload_photo(
+    store_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
+    file: Annotated[UploadFile, File(description="이미지 파일")],
+    category: Annotated[PhotoCategory | None, Form(description="사진 분류. 생략하면 기타")] = None,
+) -> PhotoResponse:
+    """가게 사진을 업로드한다.
+
+    `category`는 선택이다 — AI 자동분류(기능명세서 S03.2.1)가 붙기 전까지 프론트가
+    지정하고, 없으면 `기타`로 저장된다.
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    photo = photo_service.create_photo(db, storage, store, file, category)
+    return _photo_response(storage, photo)
+
+
+@router.delete("/{store_id}/photos/{photo_id}", response_model=MessageResponse)
+def delete_photo(
+    store_id: int, photo_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> MessageResponse:
+    store = store_service.get_owned_store(db, user, store_id)
+    photo_service.delete_photo(db, storage, photo_service.get_photo(db, store, photo_id))
+    return MessageResponse(message="사진이 삭제되었습니다.")

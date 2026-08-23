@@ -6,6 +6,7 @@ Alembic autogenerate가 테이블을 인식하려면 새 모델을 여기서 임
 from app.models.store import Store
 from app.models.store_insight import StoreInsight
 from app.models.store_menu import StoreMenu
+from app.models.store_photo import StorePhoto
 from app.models.store_target_customer import StoreTargetCustomer, TargetStatus
 from app.models.user import User
 
@@ -13,6 +14,7 @@ __all__ = [
     "Store",
     "StoreInsight",
     "StoreMenu",
+    "StorePhoto",
     "StoreTargetCustomer",
     "TargetStatus",
     "User",

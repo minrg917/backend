@@ -272,3 +272,33 @@ class InsightResponse(BaseSchema):
 
 class InsightListResponse(BaseSchema):
     insights: list[InsightResponse]
+
+
+# ---------------------------------------------------------------- 3.3 가게사진
+
+
+class PhotoCategory(StrEnum):
+    """사진 분류 (기능명세서 S03.2.1).
+
+    AI 자동분류가 붙기 전까지는 업로드 시 프론트가 지정하며, 지정하지 않으면 `기타`다.
+    """
+
+    SIGNBOARD = "간판"
+    EXTERIOR = "외관"
+    INTERIOR = "내부"
+    MENU = "메뉴"
+    PROCESS = "제조·시술"
+    PERSON = "인물"
+    ETC = "기타"
+
+
+class PhotoResponse(BaseSchema):
+    id: int
+    file_url: str
+    category: str | None
+    has_sensitive_info: bool
+    created_at: UtcDatetime
+
+
+class PhotoListResponse(BaseSchema):
+    photos: list[PhotoResponse]
