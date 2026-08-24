@@ -70,6 +70,13 @@ class ShortsProject(Base, TimestampMixin):
     )
     # 진입 경로마다 목적을 받는 시점이 달라 NULL을 허용한다 — 홈 피드에서 포맷을 고르는
     # 경로는 목적을 묻지 않고 바로 촬영 준비로 넘어간다(2026-08-23 화면 확인).
+    # 7.1 AI 기획이 지어주는 제목. 사장님이 입력하는 값이 아니다.
+    # 없으면 화면은 promotion_purpose를 라벨로 쓴다 — 목적이 4종뿐이라 영상이
+    # 쌓이면 카드가 전부 똑같아 보이는 문제를 이 컬럼이 해결한다.
+    # ERD 원문에는 없던 컬럼, IMPLEMENTATION.md 2026-08-24 항목 참조
+    project_title: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, comment="AI가 지은 프로젝트 제목 - 7.1 결과"
+    )
     promotion_purpose: Mapped[PromotionPurpose | None] = mapped_column(
         String(50), nullable=True, comment="홍보 목적(메뉴소개/이벤트알리기/가게소개/고객늘리기)"
     )

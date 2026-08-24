@@ -109,6 +109,7 @@ def test_list_returns_spec_fields(
 
     assert set(body["projects"][0]) == {
         "id",
+        "project_title",
         "promotion_purpose",
         "shorts_status",
         "updated_at",
@@ -387,6 +388,7 @@ def test_get_project_returns_spec_fields(
     assert set(body) == {
         "id",
         "store_id",
+        "project_title",
         "video_format_id",
         "store_target_customer_id",
         "menu_id",

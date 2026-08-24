@@ -75,6 +75,10 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
     )
 
     project.video_format_id = video_format.id
+    # AI가 제목을 안 주면(연동 전 placeholder) 기존 값을 지우지 않는다 — 재기획으로
+    # 멀쩡한 제목이 사라지면 목록 카드가 도로 "메뉴소개"로 돌아간다.
+    if plan.project_title:
+        project.project_title = plan.project_title
     project.estimated_shooting_sec = plan.estimated_shooting_sec
     project.required_people = plan.required_people
     project.props = plan.props

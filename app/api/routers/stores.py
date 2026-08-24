@@ -345,6 +345,7 @@ def list_store_shorts(
             StoreShortItem(
                 video_output_id=output.id,
                 shorts_project_id=project.id,
+                project_title=project.project_title,
                 promotion_purpose=project.promotion_purpose,
                 video_url=to_public_url(storage, output.video_url),
                 cover_image_url=to_public_url(storage, output.cover_image_url),

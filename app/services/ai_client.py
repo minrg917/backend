@@ -59,8 +59,11 @@ class PlannedTask:
 class ShootingPlan:
     """AI 기획 결과 전체 (API명세서 7.1)."""
 
-    estimated_shooting_sec: int | None
-    required_people: int | None
+    # AI가 지어준 제목. 마이페이지 그리드 카드 라벨로 쓴다(2026-08-24 AI 팀원 확인).
+    # 지어낼 수 없는 값이라 placeholder에서는 None이다.
+    project_title: str | None = None
+    estimated_shooting_sec: int | None = None
+    required_people: int | None = None
     props: list[str] = field(default_factory=list)
     difficulty: str | None = None
     scenes: list[PlannedScene] = field(default_factory=list)
