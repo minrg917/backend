@@ -1,0 +1,24 @@
+name: deploy
+
+# main에 push될 때만 배포한다 — develop이 아니다. feature/fix는 develop으로
+# 계속 쌓이고, develop -> main PR을 머지하는 "배포 시점"에만 실서버가 갱신된다
+# (docs/CLAUDE.md 2026-08-26 워크플로 정정 참고). develop 트리거로 걸면 PR
+# 하나 머지될 때마다 즉시 배포돼 "모아서 배포"가 무의미해진다.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/backend
+            git pull
+            .venv/bin/poetry install --without dev
+            sudo systemctl restart sarils-api
