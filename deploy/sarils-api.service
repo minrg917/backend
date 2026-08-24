@@ -1,0 +1,46 @@
+# systemd 유닛. 서버에 이렇게 설치한다.
+#
+#   sudo cp deploy/sarils-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sarils-api
+#
+# 로그는 journalctl -u sarils-api -f 로 본다.
+
+[Unit]
+Description=SARILS backend API
+# DB가 원격(RDS)이라 로컬 의존은 네트워크뿐이다.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ubuntu
+WorkingDirectory=/home/ubuntu/backend
+
+# .env를 systemd가 직접 읽는다. 앱도 같은 파일을 읽지만, 여기 실어두면
+# ExecStartPre(마이그레이션)에서도 같은 값을 쓸 수 있다.
+EnvironmentFile=/home/ubuntu/backend/.env
+
+# 코드를 배포한 뒤 서비스를 재시작하면 스키마가 자동으로 따라온다.
+# 실패하면 서비스가 뜨지 않는다 — 스키마가 어긋난 채 요청을 받는 것보다 낫다.
+ExecStartPre=/home/ubuntu/backend/.venv/bin/alembic upgrade head
+
+# 워커 수는 코어 수에 맞춘다. t3.small(2vCPU/2GB)에서는 2가 상한이다 —
+# 워커마다 앱이 통째로 메모리에 올라가므로 더 늘리면 OOM으로 죽는다.
+ExecStart=/home/ubuntu/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 2 --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=5
+
+# 앱이 건드릴 필요 없는 곳을 잠근다. 컨테이너가 아니라 호스트에서 도는 만큼
+# 최소한의 격리는 걸어둔다.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/backend
+
+[Install]
+WantedBy=multi-user.target
