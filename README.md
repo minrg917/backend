@@ -8,26 +8,61 @@ FLY AI 열정 2조. 소상공인이 AI의 도움을 받아 숏폼(릴스/쇼츠)
 | --- | --- |
 | 언어 | Python 3.12 |
 | 프레임워크 | FastAPI |
-| ORM | SQLAlchemy 2.0 (동기) |
 | DB | MySQL 8 (로컬은 Docker) |
-| 마이그레이션 | Alembic |
-| 의존성 관리 | Poetry |
-| 린트·포맷 | Ruff |
+
 
 ## 로컬 실행
 
-> 초기 프로젝트 세팅 이후 작성 예정입니다.
+**필요한 것**: Python 3.12, [Poetry](https://python-poetry.org/docs/#installation), Docker
 
-## 문서
+```bash
+# 1) 환경변수 파일 준비
+cp .env.example .env
+# 로컬 3306 포트가 이미 사용 중이면 .env 의 DB_PORT 를 3307 등으로 바꾼다.
 
-스펙 문서(기능명세서 · API 명세서 · ERD)는 **이 레포에 포함되어 있지 않습니다.** 팀 내부 채널과 Notion에서 공유합니다.
+# 2) 의존성 설치
+poetry install
 
-| 문서 | 위치 |
+# 3) MySQL 컨테이너 기동
+docker compose up -d
+
+# 4) DB 스키마 반영
+poetry run alembic upgrade head
+
+# 5) 서버 실행
+poetry run uvicorn app.main:app --reload
+```
+
+| 주소 | 설명 |
 | --- | --- |
-| API 명세서 | Notion **📍 API Spec** DB |
-| 기능명세서 · ERD · 결정 기록 | 팀 내부 공유 (레포 미포함) |
+| http://localhost:8000/health | 헬스체크 (서버 + DB 연결 상태) |
+| http://localhost:8000/docs | Swagger UI |
+| http://localhost:8000/redoc | ReDoc |
 
-작업 전에 해당 문서에서 요구사항(R번호)과 ERD 컬럼명을 먼저 확인해주세요. **API의 Body/Response 필드명은 ERD 컬럼명을 그대로 사용합니다.**
+**코드 검사**
+
+```bash
+poetry run ruff check .      # 린트
+poetry run ruff format .     # 포맷
+poetry run pytest            # 테스트
+```
+
+## 프로젝트 구조
+
+```
+app/
+├── main.py              FastAPI 진입점 (CORS, 라우터 등록)
+├── core/config.py       환경변수 기반 설정
+├── db/session.py        DB 엔진·세션·Base
+├── api/
+│   ├── router.py        전체 라우터 집합
+│   └── routers/         도메인별 라우터
+├── models/              SQLAlchemy 모델
+└── schemas/             Pydantic 요청·응답 스키마
+migrations/              Alembic 마이그레이션
+tests/                   pytest
+```
+
 
 ## 기여 방법
 

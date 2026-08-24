@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Poetry 설치
+        run: pipx install poetry
+
+      - name: 의존성 설치
+        run: poetry install --no-interaction
+
+      - name: Ruff 린트 검사
+        run: poetry run ruff check .
+
+      - name: Ruff 포맷 검사
+        run: poetry run ruff format --check .
+
+      - name: 테스트
+        run: poetry run pytest
+        env:
+          DB_HOST: localhost
