@@ -163,10 +163,16 @@ crontab -e
 ## 8. 배포 이후
 
 ```bash
-cd ~/backend && git pull
+cd ~/backend
+git fetch origin main && git checkout main && git reset --hard origin/main
 .venv/bin/poetry install --without dev      # 의존성이 바뀐 경우만
 sudo systemctl restart sarils-api           # 마이그레이션은 자동으로 돈다
 ```
+
+이 레포의 GitHub 기본 브랜치가 `develop`이라, 서버를 처음 `git clone`하면 로컬 체크아웃이
+`develop`을 보게 된다. 배포는 항상 `main` 기준이므로 브랜치를 명시적으로 지정해야 한다 — 그냥
+`git pull`을 쓰면 체크아웃된 브랜치(develop)를 당겨서 실제 배포 코드가 어긋날 수 있다
+(2026-08-26 첫 자동배포 로그에서 발견).
 
 ## 9. 자동 배포 (수동 배포가 몇 번 성공한 뒤에)
 
@@ -189,7 +195,7 @@ name: deploy
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
 
 jobs:
   deploy:
@@ -202,10 +208,16 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/backend
-            git pull
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
             .venv/bin/poetry install --without dev
             sudo systemctl restart sarils-api
 ```
+
+`main`에 push될 때만 배포한다 — `develop`이 아니다. feature/fix는 `develop`으로 계속
+쌓이고, `develop → main` PR을 머지하는 "배포 시점"에만 실서버가 갱신된다. `git pull` 대신
+브랜치를 명시하는 이유는 위 "8. 배포 이후" 참고.
 
 `sudo systemctl restart`가 비밀번호 없이 되도록 sudoers에 한 줄이 필요합니다.
 
