@@ -19,6 +19,14 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/backend
-            git pull
+            # 서버의 로컬 체크아웃이 어느 브랜치를 보고 있었든 상관없이 항상
+            # main을 명시적으로 가져온다. 이 레포의 GitHub 기본 브랜치가
+            # develop이라, 순진한 `git pull`은 체크아웃된 브랜치(=develop)를
+            # 당겨서 트리거(main push)와 실제 배포 코드가 어긋날 수 있었다
+            # (2026-08-26 첫 자동배포 로그에서 발견 — 그날은 두 브랜치 내용이
+            # 우연히 같아서 드러나지 않았다).
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
             .venv/bin/poetry install --without dev
             sudo systemctl restart sarils-api
