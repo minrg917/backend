@@ -35,11 +35,10 @@ import json
 import re
 import sys
 import time
-
 from dataclasses import dataclass
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -71,7 +70,7 @@ def _place_id_from(value: str) -> str:
 
 def _build_driver() -> webdriver.Chrome:
     options = Options()
-    #options.add_argument("--headless=new")
+    # options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1280,2000")
@@ -115,9 +114,7 @@ def fetch_menu(place_id_or_url: str, limit: int = 5) -> list[MenuItem]:
         time.sleep(3)
 
         try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "app"))
-            )
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "app")))
         except TimeoutException as error:
             raise _debug_failure(driver, "페이지가 로드되지 않았습니다.") from error
 

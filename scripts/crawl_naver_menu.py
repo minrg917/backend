@@ -41,7 +41,6 @@ import argparse
 import re
 import sys
 import time
-
 from dataclasses import dataclass
 
 from selenium import webdriver
