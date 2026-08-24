@@ -34,9 +34,7 @@ class SessionStatus(StrEnum):
 class ShortformSession(Base, TimestampMixin):
     __tablename__ = "shortform_sessions"
 
-    id: Mapped[int] = mapped_column(
-        BigInt, primary_key=True, autoincrement=True, comment="세션 ID"
-    )
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True, comment="세션 ID")
     store_id: Mapped[int] = mapped_column(
         BigInt,
         ForeignKey("stores.id", ondelete="CASCADE"),

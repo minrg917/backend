@@ -299,9 +299,7 @@ def get_editing_run_result(run_id: str) -> EditingRunResult:
     함수가 호출될 일이 없다 — 호출되면 프로그래밍 오류다.
     """
     if not is_enabled():
-        raise NotImplementedError(
-            "AI 연동 전에는 편집이 완료되지 않아 결과를 조회할 수 없습니다."
-        )
+        raise NotImplementedError("AI 연동 전에는 편집이 완료되지 않아 결과를 조회할 수 없습니다.")
 
     del run_id
     # AI 스펙 확정 후: GET /api/v1/editing-runs/{run_id}/result
