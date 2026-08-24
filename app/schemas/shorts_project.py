@@ -389,6 +389,10 @@ class EditResultResponse(BaseSchema):
     progress_percent: int
     preview_video_url: str | None
     timeline_summary: list[TimelineItem]
+    # render_status가 SOURCE_GAP일 때만 채워진다(`docs/AI_연동_입출력.md` 21번).
+    # 그 외에는 항상 null이다.
+    missing_scene_roles: list[str] | None = None
+    available_options: list[str] | None = None
 
 
 class ReviseRequestType(StrEnum):

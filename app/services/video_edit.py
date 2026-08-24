@@ -1,4 +1,11 @@
-"""AI 자동편집 로직 (API명세서 14.1~14.3)."""
+"""AI 자동편집 로직 (API명세서 14.1~14.3).
+
+2026-08-26: AI팀 지침(`docs/AI_연동_입출력.md` 15~21번)에 따라 **비동기(run 생성
++ 폴링) 구조로 재설계**했다. FE가 보는 계약(14.1이 `render_status`를 즉시 돌려주고
+14.2가 폴링하는 모양)은 원래도 이 모양이었어서 바뀌지 않는다 — 안쪽에서 AI를
+동기 호출 한 번으로 끝내던 것을, run을 만들고 GET마다 상태를 동기화하는 방식으로
+바꿨을 뿐이다.
+"""
 
 import json
 
@@ -22,6 +29,16 @@ _PROGRESS_BY_STATUS = {
     RenderStatus.PROCESSING: 50,
     RenderStatus.COMPLETED: 100,
     RenderStatus.FAILED: 0,
+    RenderStatus.SOURCE_GAP: 0,
+}
+
+# AI가 쓰는 상태 문자열 -> 우리 RenderStatus. 모르는 값은 안전하게 PENDING으로 본다.
+_AI_STATUS_MAP = {
+    "QUEUED": RenderStatus.PENDING,
+    "RUNNING": RenderStatus.PROCESSING,
+    "COMPLETED": RenderStatus.COMPLETED,
+    "FAILED": RenderStatus.FAILED,
+    "SOURCE_GAP": RenderStatus.SOURCE_GAP,
 }
 
 
@@ -35,6 +52,35 @@ class TasksIncomplete(BadRequestError):
     message = "아직 촬영하지 않은 태스크가 있어 편집을 시작할 수 없습니다."
 
 
+def _map_status(ai_status: str) -> RenderStatus:
+    return _AI_STATUS_MAP.get(ai_status, RenderStatus.PENDING)
+
+
+def _build_footage_inputs(db: Session, project: ShortsProject) -> list[ai_client.FootageInput]:
+    """촬영본 목록을 AI 요청 형식으로 만든다 (`docs/AI_연동_입출력.md` 16번 `videos[]`).
+
+    `shooting_scene_order`는 태스크가 연결된 장면의 순서다 — 장면에 연결 안 된
+    태스크(`scene_id`가 `NULL`)는 `null`로 보낸다(AI 문서가 명시적으로 허용).
+    """
+    rows = db.execute(
+        select(ShootingTask, StoryboardScene.scene_order)
+        .outerjoin(StoryboardScene, StoryboardScene.id == ShootingTask.scene_id)
+        .where(
+            ShootingTask.shorts_project_id == project.id,
+            ShootingTask.footage_url.is_not(None),
+        )
+        .order_by(ShootingTask.display_order, ShootingTask.id)
+    ).all()
+    return [
+        ai_client.FootageInput(
+            video_id=f"task_{task.id}",
+            footage_url=task.footage_url,
+            shooting_scene_order=scene_order,
+        )
+        for task, scene_order in rows
+    ]
+
+
 def start_edit(db: Session, project: ShortsProject, target_platform: str) -> VideoOutput:
     """편집을 시작한다 (API명세서 14.1).
 
@@ -46,15 +92,15 @@ def start_edit(db: Session, project: ShortsProject, target_platform: str) -> Vid
     `DONE`으로 바꿔도 촬영본이 없으면 편집할 재료가 없다.
     """
     _require_all_footage(db, project)
+    store = db.get(Store, project.store_id)
+    assert store is not None  # 프로젝트가 있으면 가게도 있다(FK)
 
-    recipe = ai_client.generate_edit_recipe(target_platform)
+    run = ai_client.start_editing_run(store, project, _build_footage_inputs(db, project))
     output = VideoOutput(
         shorts_project_id=project.id,
-        edit_recipe=json.dumps(recipe.recipe, ensure_ascii=False),
+        ai_run_id=run.run_id,
         target_platform=target_platform,
-        resolution=recipe.resolution,
-        has_licensed_audio=recipe.has_licensed_audio,
-        render_status=RenderStatus.PENDING,
+        render_status=_map_status(run.status),
     )
     db.add(output)
     db.commit()
@@ -88,6 +134,54 @@ def _require_all_footage(db: Session, project: ShortsProject) -> None:
         )
 
 
+def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
+    """AI 쪽 편집 실행 상태를 우리 산출물에 반영한다.
+
+    14.2(`GET .../edit/result`)를 부를 때마다, 그리고 15.1이 최신 산출물을
+    참조하기 직전에 호출한다 — 렌더링이 비동기라 우리가 먼저 알 방법이 없고,
+    폴링 요청이 올 때 AI 쪽 상태를 확인하는 수밖에 없다("poll-through").
+
+    이미 끝난 상태(`COMPLETED`/`FAILED`/`SOURCE_GAP`)거나 `ai_run_id`가 없으면
+    (레거시 데이터) 그대로 돌려준다 — 끝난 편집은 다시 진행되지 않는다.
+    """
+    still_in_progress = output.render_status in (RenderStatus.PENDING, RenderStatus.PROCESSING)
+    if not still_in_progress or not output.ai_run_id:
+        return output
+
+    run = ai_client.get_editing_run(output.ai_run_id)
+    new_status = _map_status(run.status)
+    if new_status == output.render_status:
+        return output
+
+    output.render_status = new_status
+    if new_status is RenderStatus.COMPLETED:
+        result = ai_client.get_editing_run_result(output.ai_run_id)
+        output.edit_recipe = json.dumps(result.recipe or {}, ensure_ascii=False)
+        output.video_url = result.video_url
+        output.cover_image_url = result.cover_image_url
+        output.resolution = result.resolution
+        # 배경음악을 직접 입히지 않기로 확정돼 항상 false다(2026-08-24 결정,
+        # `docs/AI_연동_입출력.md` 19번).
+        output.has_licensed_audio = False
+        if result.publishing is not None:
+            project = db.get(ShortsProject, output.shorts_project_id)
+            assert project is not None
+            project.publish_kit = {
+                "caption": result.publishing.caption,
+                "hashtags": result.publishing.hashtags,
+                "post_note": result.publishing.post_note,
+                "track": result.publishing.track,
+            }
+    elif new_status is RenderStatus.SOURCE_GAP:
+        result = ai_client.get_editing_run_result(output.ai_run_id)
+        output.missing_scene_roles = result.missing_scene_roles or []
+        output.available_options = result.available_options or []
+
+    db.commit()
+    db.refresh(output)
+    return output
+
+
 def latest_output(db: Session, project: ShortsProject) -> VideoOutput:
     """가장 최근 산출물. 프로젝트당 여러 개(플랫폼별·수정 이력)가 쌓인다."""
     output = db.scalar(
@@ -98,7 +192,7 @@ def latest_output(db: Session, project: ShortsProject) -> VideoOutput:
     )
     if output is None:
         raise OutputNotFound
-    return output
+    return sync_output(db, output)
 
 
 def progress_percent(output: VideoOutput) -> int:
@@ -150,17 +244,18 @@ def revise(db: Session, output: VideoOutput, request_type: str, action: str) -> 
     **기존 산출물을 고치지 않고 새 행을 만든다** — ERD의 `created_at` 코멘트가
     "수정 요청마다 새 행이 쌓여 자연스럽게 버전 이력이 됨"이다. 이전 버전으로
     돌아갈 수 있고, 어떤 지시로 만들어졌는지도 레시피에 남는다.
+
+    AI 쪽도 **새 run**을 만든다(`docs/AI_연동_입출력.md` 20번) — 기존 EditRecipe는
+    immutable하게 유지된다.
     """
     del request_type  # AI 연동 시 프롬프트 구성에 사용한다
 
-    recipe = ai_client.generate_edit_recipe(output.target_platform or "", revision_action=action)
+    run = ai_client.request_revision(output.ai_run_id or "", action)
     revised = VideoOutput(
         shorts_project_id=output.shorts_project_id,
-        edit_recipe=json.dumps(recipe.recipe, ensure_ascii=False),
+        ai_run_id=run.run_id,
         target_platform=output.target_platform,
-        resolution=recipe.resolution,
-        has_licensed_audio=recipe.has_licensed_audio,
-        render_status=RenderStatus.PROCESSING,
+        render_status=_map_status(run.status),
     )
     db.add(revised)
     db.commit()
