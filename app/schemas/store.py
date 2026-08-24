@@ -296,7 +296,7 @@ class PhotoResponse(BaseSchema):
     id: int
     file_url: str
     category: str | None
-    has_sensitive_info: bool
+    has_sensitive_info: bool | None
     created_at: UtcDatetime
 
 

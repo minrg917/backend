@@ -58,7 +58,7 @@ def test_upload_returns_spec_fields(
     body = response.json()
     assert set(body) == {"id", "file_url", "category", "has_sensitive_info", "created_at"}
     assert body["category"] == "간판"
-    assert body["has_sensitive_info"] is False
+    assert body["has_sensitive_info"] is None
     assert body["created_at"].endswith("Z")
 
 

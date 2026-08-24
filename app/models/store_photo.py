@@ -41,10 +41,14 @@ class StorePhoto(Base):
         nullable=True,
         comment="사진 분류(간판/외관/내부/메뉴/제조·시술/인물/기타) - AI 자동분류 예정",
     )
-    has_sensitive_info: Mapped[bool] = mapped_column(
-        default=False,
-        nullable=False,
-        comment="고객 얼굴 등 민감정보 포함 여부(편집 시 사용 제한 판단)",
+    has_sensitive_info: Mapped[bool | None] = mapped_column(
+        default=None,
+        nullable=True,
+        comment=(
+            "고객 얼굴 등 민감정보 포함 여부(편집 시 사용 제한 판단). AI 판별 전에는 "
+            "null(미확인) — false로 채우면 '민감정보 없음'으로 오인될 수 있다"
+            "(AI팀 지침, docs/AI_연동_입출력.md 27번)"
+        ),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, nullable=False, comment="등록일시(UTC)"
