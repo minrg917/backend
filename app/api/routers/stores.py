@@ -23,6 +23,8 @@ from app.schemas.store import (
     PhotoCategory,
     PhotoListResponse,
     PhotoResponse,
+    PhotoUpdateRequest,
+    PhotoUpdateResponse,
     StoreCreateRequest,
     StoreCreateResponse,
     StoreDetailResponse,
@@ -300,6 +302,22 @@ def upload_photo(
     store = store_service.get_owned_store(db, user, store_id)
     photo = photo_service.create_photo(db, storage, store, file, category)
     return _photo_response(storage, photo)
+
+
+@router.patch("/{store_id}/photos/{photo_id}", response_model=PhotoUpdateResponse)
+def update_photo(
+    store_id: int, photo_id: int, payload: PhotoUpdateRequest, user: CurrentUser, db: DbSession
+) -> PhotoUpdateResponse:
+    """사진 분류를 사장님이 직접 고친다 (2026-08-26 신설).
+
+    AI 자동분류가 붙기 전까지 잘못 분류된 사진을 고칠 방법이 없었다 — 기능명세서
+    S03.2.1 "분류를 수정할 수 있다"를 충족한다. `has_sensitive_info`는 여기서
+    다루지 않는다(AI 판별 몫).
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    photo = photo_service.get_photo(db, store, photo_id)
+    photo = photo_service.update_photo_category(db, photo, payload.category)
+    return PhotoUpdateResponse(id=photo.id, category=photo.category)
 
 
 @router.delete("/{store_id}/photos/{photo_id}", response_model=MessageResponse)
