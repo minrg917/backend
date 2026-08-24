@@ -58,7 +58,7 @@ def test_upload_returns_spec_fields(
     body = response.json()
     assert set(body) == {"id", "file_url", "category", "has_sensitive_info", "created_at"}
     assert body["category"] == "간판"
-    assert body["has_sensitive_info"] is False
+    assert body["has_sensitive_info"] is None
     assert body["created_at"].endswith("Z")
 
 
@@ -156,6 +156,66 @@ def test_upload_requires_authentication(client: TestClient, store_id: int) -> No
         f"/stores/{store_id}/photos",
         files={"file": ("photo.png", io.BytesIO(PNG_BYTES), "image/png")},
     )
+
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------- 분류 수정 (2026-08-26)
+
+
+def test_update_category_changes_classification(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    photo_id = _upload(client, auth_headers, store_id, category="기타").json()["id"]
+
+    response = client.patch(
+        f"/stores/{store_id}/photos/{photo_id}", json={"category": "간판"}, headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"id": photo_id, "category": "간판"}
+    listed = client.get(f"/stores/{store_id}/photos", headers=auth_headers).json()["photos"]
+    assert listed[0]["category"] == "간판"
+
+
+def test_update_category_rejects_unknown_value(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    photo_id = _upload(client, auth_headers, store_id).json()["id"]
+
+    response = client.patch(
+        f"/stores/{store_id}/photos/{photo_id}", json={"category": "없는분류"}, headers=auth_headers
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_category_of_another_store_is_not_reachable(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    photo_id = _upload(client, auth_headers, store_id).json()["id"]
+    other_store_id = client.post(
+        "/stores",
+        json={"name": "두번째가게", "category": "분식", "address": "서울 마포구 양화로 100"},
+        headers=auth_headers,
+    ).json()["id"]
+
+    response = client.patch(
+        f"/stores/{other_store_id}/photos/{photo_id}",
+        json={"category": "간판"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "PHOTO_NOT_FOUND"
+
+
+def test_update_category_requires_authentication(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    photo_id = _upload(client, auth_headers, store_id).json()["id"]
+
+    response = client.patch(f"/stores/{store_id}/photos/{photo_id}", json={"category": "간판"})
 
     assert response.status_code == 401
 

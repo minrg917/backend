@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.api.deps import CurrentUser, DbSession
 from app.db.session import SessionLocal
 from app.schemas.common import MessageResponse
+from app.schemas.shortform_session import SessionCreateResponse, SessionOptionResponse
 from app.schemas.store import (
     ImportStatusResponse,
     InsightListResponse,
@@ -22,6 +23,8 @@ from app.schemas.store import (
     PhotoCategory,
     PhotoListResponse,
     PhotoResponse,
+    PhotoUpdateRequest,
+    PhotoUpdateResponse,
     StoreCreateRequest,
     StoreCreateResponse,
     StoreDetailResponse,
@@ -37,6 +40,7 @@ from app.schemas.store import (
     TargetCustomerUpdateResponse,
 )
 from app.services import menu_crawl as menu_crawl_service
+from app.services import shortform_session as session_service
 from app.services import store as store_service
 from app.services import store_insight as insight_service
 from app.services import store_menu as menu_service
@@ -300,6 +304,22 @@ def upload_photo(
     return _photo_response(storage, photo)
 
 
+@router.patch("/{store_id}/photos/{photo_id}", response_model=PhotoUpdateResponse)
+def update_photo(
+    store_id: int, photo_id: int, payload: PhotoUpdateRequest, user: CurrentUser, db: DbSession
+) -> PhotoUpdateResponse:
+    """사진 분류를 사장님이 직접 고친다 (2026-08-26 신설).
+
+    AI 자동분류가 붙기 전까지 잘못 분류된 사진을 고칠 방법이 없었다 — 기능명세서
+    S03.2.1 "분류를 수정할 수 있다"를 충족한다. `has_sensitive_info`는 여기서
+    다루지 않는다(AI 판별 몫).
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    photo = photo_service.get_photo(db, store, photo_id)
+    photo = photo_service.update_photo_category(db, photo, payload.category)
+    return PhotoUpdateResponse(id=photo.id, category=photo.category)
+
+
 @router.delete("/{store_id}/photos/{photo_id}", response_model=MessageResponse)
 def delete_photo(
     store_id: int, photo_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
@@ -371,4 +391,28 @@ def list_store_shorts(
         page=page,
         size=size,
         total=total,
+    )
+
+
+@router.post(
+    "/{store_id}/shortform-sessions",
+    response_model=SessionCreateResponse,
+    status_code=HTTPStatus.CREATED,
+)
+def create_shortform_session(
+    store_id: int, user: CurrentUser, db: DbSession
+) -> SessionCreateResponse:
+    """숏폼 Agent와의 대화를 시작한다 (R06, 2026-08-26 재설계).
+
+    프로젝트 없이 가게만으로 시작한다 — 대화로 홍보 목적을 정하고 나서(6.x → accept)
+    그 결과로 4.1의 프로젝트를 만든다. 대화는
+    `POST /shortform-sessions/{sessionId}/turns`로 이어간다.
+    """
+    session, greeting = session_service.create_session(db, user, store_id)
+    return SessionCreateResponse(
+        id=session.id,
+        status=session.status,
+        assistant_message=greeting.assistant_message,
+        options=[SessionOptionResponse(id=o.id, label=o.label) for o in greeting.options],
+        project_state=greeting.project_state,
     )

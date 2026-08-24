@@ -296,12 +296,27 @@ class PhotoResponse(BaseSchema):
     id: int
     file_url: str
     category: str | None
-    has_sensitive_info: bool
+    has_sensitive_info: bool | None
     created_at: UtcDatetime
 
 
 class PhotoListResponse(BaseSchema):
     photos: list[PhotoResponse]
+
+
+class PhotoUpdateRequest(BaseSchema):
+    """사진 분류를 사장님이 직접 고친다 (기능명세서 S03.2.1 "분류를 수정할 수 있다").
+
+    `category`만 받는다 — `has_sensitive_info`는 AI 판별 몫이라 사람이 끄고 켜면
+    오판 위험이 더 커진다(2026-08-26 결정, `docs/PM_DECISIONS.md`).
+    """
+
+    category: PhotoCategory
+
+
+class PhotoUpdateResponse(BaseSchema):
+    id: int
+    category: str
 
 
 # ---------------------------------------------------------------- 3.6 가게 로고

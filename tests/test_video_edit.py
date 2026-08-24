@@ -206,8 +206,12 @@ def test_edit_result_returns_spec_fields(
         "progress_percent",
         "preview_video_url",
         "timeline_summary",
+        "missing_scene_roles",
+        "available_options",
     }
     assert body["progress_percent"] == 0  # PENDING
+    assert body["missing_scene_roles"] is None  # SOURCE_GAP 전용, 평소엔 null
+    assert body["available_options"] is None
     assert set(body["timeline_summary"][0]) == {"scene_order", "duration_sec", "effect"}
 
 

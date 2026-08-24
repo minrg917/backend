@@ -44,6 +44,8 @@ from app.storage import Storage, get_storage, to_public_url
 
 router = APIRouter(prefix="/shorts-projects", tags=["shorts-projects"])
 
+StorageDep = Annotated[Storage, Depends(get_storage)]
+
 
 @router.post("", response_model=ProjectCreateResponse, status_code=HTTPStatus.CREATED)
 def create_project(
@@ -204,10 +206,13 @@ def start_edit(
 
 
 @router.get("/{project_id}/edit/result", response_model=EditResultResponse)
-def get_edit_result(project_id: int, user: CurrentUser, db: DbSession) -> EditResultResponse:
+def get_edit_result(
+    project_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> EditResultResponse:
     """편집 결과와 렌더링 진행 상태를 돌려준다.
 
     프로젝트당 산출물이 여러 개(플랫폼별·수정 이력) 쌓이므로 **가장 최근 것**을 준다.
+    폴링될 때마다 AI 쪽 진행 상태를 동기화한다(`edit_service.sync_output`, poll-through).
     """
     project = project_service.get_owned_project(db, user, project_id)
     output = edit_service.latest_output(db, project)
@@ -216,14 +221,14 @@ def get_edit_result(project_id: int, user: CurrentUser, db: DbSession) -> EditRe
         render_status=output.render_status,
         progress_percent=edit_service.progress_percent(output),
         # 미리보기 전용 파일을 따로 만들기 전까지는 결과 영상을 그대로 쓴다
-        preview_video_url=output.video_url,
+        preview_video_url=to_public_url(storage, output.video_url),
         timeline_summary=edit_service.build_timeline(db, project),
+        missing_scene_roles=output.missing_scene_roles,
+        available_options=output.available_options,
     )
 
 
 # ---------------------------------------------------------------- 15.1 최종 출력·게시자료
-
-StorageDep = Annotated[Storage, Depends(get_storage)]
 
 
 def _output_list(storage: Storage, outputs: list, publish_kit: dict | None) -> OutputListResponse:

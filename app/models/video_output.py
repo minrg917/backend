@@ -9,7 +9,7 @@
 
 from enum import StrEnum
 
-from sqlalchemy import Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -22,6 +22,10 @@ class RenderStatus(StrEnum):
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    # 편집 Agent가 현재 촬영본으로는 템플릿 구조를 못 만들 때(`docs/AI_연동_입출력.md`
+    # 21번 "Source Gap"). FAILED와 달리 재시도가 아니라 **사용자가 선택**해야 한다
+    # (`missing_scene_roles`·`available_options` 참고). 2026-08-26 R14 재설계로 추가.
+    SOURCE_GAP = "SOURCE_GAP"
 
 
 class VideoOutput(Base, TimestampMixin):
@@ -57,7 +61,19 @@ class VideoOutput(Base, TimestampMixin):
         Enum(RenderStatus, native_enum=False, length=20),
         default=RenderStatus.PENDING,
         nullable=False,
-        comment="상태(대기/처리중/완료/실패)",
+        comment="상태(대기/처리중/완료/실패/소스부족)",
+    )
+    # AI 편집 Agent 쪽 실행 식별자(`docs/AI_연동_입출력.md` 16번 run_id). 진행 상태를
+    # 폴링할 때 쓴다. ERD 원문에는 없던 컬럼, IMPLEMENTATION.md 2026-08-26 항목 참조.
+    ai_run_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="AI 편집 실행(run) 식별자"
+    )
+    # SOURCE_GAP 상태일 때만 채워진다(21번). 사장님이 선택할 대안을 보여주는 데 쓴다.
+    missing_scene_roles: Mapped[list[str] | None] = mapped_column(
+        JSON, nullable=True, comment="부족한 장면 역할 목록(SOURCE_GAP 전용)"
+    )
+    available_options: Mapped[list[str] | None] = mapped_column(
+        JSON, nullable=True, comment="선택 가능한 대응 옵션(SOURCE_GAP 전용)"
     )
 
     def __repr__(self) -> str:

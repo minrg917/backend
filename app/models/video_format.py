@@ -8,7 +8,7 @@
 임베드로 노출한다(기능명세서 S07.1.1 "원본 파일을 다운로드·재업로드하지 않는다").
 """
 
-from sqlalchemy import Integer, String
+from sqlalchemy import Boolean, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -42,6 +42,34 @@ class VideoFormat(Base, TimestampMixin):
     )
     face_exposure_level: Mapped[str | None] = mapped_column(
         String(20), nullable=True, index=True, comment="얼굴 노출 요구 수준"
+    )
+    # 숏폼 Agent(R06)가 추천하는 "영상편집템플릿"과 연결하는 키. ERD 원문에는
+    # 없던 컬럼 — 2026-08-26 R06 재설계로 신설(docs/AI_연동_입출력.md 9번).
+    # **5.1(피드)과 R06(Agent 추천)은 같은 카탈로그를 쓴다**(2026-08-26 AI팀 확인 —
+    # "별도 카탈로그를 두는 게 아니라 플랫폼의 영상편집템플릿 카탈로그가 원본"). 다만
+    # 5.1로 들어온 기존 행 중 아직 이 값이 없는 것들이 있을 수 있다(전환기).
+    # 두 값이 모두 NULL인 행끼리는 유니크 제약에 걸리지 않는다(MySQL은 NULL을
+    # 서로 다른 값으로 취급).
+    editing_template_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="AI 서버의 영상편집템플릿 ID"
+    )
+    editing_template_version: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="영상편집템플릿 버전"
+    )
+    # R06 추천 대상은 ACTIVE 템플릿으로 한정된다(2026-08-26 AI팀 확인: "추천에는
+    # 그중 ACTIVE 상태인 템플릿만 사용하면 됨"). 5.1 목록도 같은 카탈로그이므로
+    # 함께 필터링한다(`app/services/video_format.py::list_formats`).
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+        comment="ACTIVE 여부 - false면 추천·피드 노출 대상 아님",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "editing_template_id", "editing_template_version", name="uq_video_formats_template"
+        ),
     )
 
     def __repr__(self) -> str:

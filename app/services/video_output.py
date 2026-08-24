@@ -10,6 +10,7 @@ from app.models.store import Store
 from app.models.video_format import VideoFormat
 from app.models.video_output import RenderStatus, VideoOutput
 from app.services import ai_client
+from app.services import video_edit as edit_service
 
 
 class EditNotStarted(BadRequestError):
@@ -35,6 +36,7 @@ def create_outputs(
     source = _latest_output(db, project)
     if source is None:
         raise EditNotStarted
+    source = edit_service.sync_output(db, source)  # AI 쪽 최신 상태로 갱신
 
     outputs: list[VideoOutput] = []
     for platform in target_platforms:
@@ -58,16 +60,20 @@ def create_outputs(
         db.add(output)
         outputs.append(output)
 
-    kit = ai_client.generate_publish_kit(store, project)
-    project.publish_kit = {
-        "caption": kit.caption,
-        "hashtags": kit.hashtags,
-        "post_note": kit.post_note,
-        # 음원 가이드. 값의 출처(포맷 고정 vs AI 생성)가 정해지기 전까지 None이다.
-        "track": kit.track,
-    }
+    if not ai_client.is_enabled():
+        # AI 연동 전: 편집이 완료될 때까지 기다리지 않고 캡션만 미리 만들어
+        # 15.1 화면 흐름을 확인할 수 있게 한다(`generate_publish_kit` 독스트링 참고).
+        # 연동 후에는 이 분기가 없어지고 publish_kit은 오직 sync_output()이 편집
+        # 완료 시 채운 값만 쓴다(`docs/AI_연동_입출력.md` 22번 — 별도 LLM 호출 없음).
+        kit = ai_client.generate_publish_kit(store, project)
+        project.publish_kit = {
+            "caption": kit.caption,
+            "hashtags": kit.hashtags,
+            "post_note": kit.post_note,
+            "track": kit.track,
+        }
 
-    # 새 산출물이 없어도 publish_kit은 매번 다시 만들어 저장하므로 커밋은 항상 필요하다.
+    # 새 산출물이 없어도 publish_kit이 바뀌었을 수 있으므로 커밋은 항상 필요하다.
     db.commit()
     for output in outputs:
         db.refresh(output)
@@ -93,7 +99,8 @@ def get_outputs(db: Session, project: ShortsProject) -> tuple[list[VideoOutput],
     for row in rows:
         latest_by_platform.setdefault(row.target_platform, row)
 
-    outputs = sorted(latest_by_platform.values(), key=lambda row: row.id)
+    outputs = [edit_service.sync_output(db, row) for row in latest_by_platform.values()]
+    outputs.sort(key=lambda row: row.id)
     return outputs, project.publish_kit
 
 

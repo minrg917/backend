@@ -9,6 +9,7 @@ from app.api.routers import (
     auth,
     health,
     onboarding,
+    shortform_sessions,
     shorts_projects,
     sns_connections,
     sns_posts,
@@ -25,6 +26,7 @@ api_router.include_router(onboarding.router)
 api_router.include_router(auth.router)
 api_router.include_router(stores.router)
 api_router.include_router(shorts_projects.router)
+api_router.include_router(shortform_sessions.router)
 api_router.include_router(video_formats.router)
 api_router.include_router(tasks.router)
 api_router.include_router(video_outputs.router)
