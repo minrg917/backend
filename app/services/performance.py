@@ -6,12 +6,10 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError
 from app.models.mixins import utcnow
 from app.models.shorts_project import ShortsProject
 from app.models.sns import SnsPost, SnsPostMetric
 from app.models.store import Store
-from app.models.user import User
 from app.models.video_output import VideoOutput
 
 # 비교에 쓰는 지표 이름. 플랫폼마다 주는 이름이 달라도 수집 단계에서 이 이름으로 맞춘다.
@@ -24,29 +22,6 @@ MIN_SAMPLE_SIZE = 3
 
 # 게시 직후에는 지표가 계속 오르는 중이라 확정된 값이 아니다.
 _CONFIDENCE_DAYS = ((7, "낮음"), (30, "보통"))
-
-
-class SnsPostNotFound(NotFoundError):
-    error_code = "SNS_POST_NOT_FOUND"
-    message = "게시물을 찾을 수 없습니다."
-
-
-def get_owned_post(db: Session, owner: User, post_id: int) -> SnsPost:
-    """본인 가게의 게시물만 가져온다. 남의 것은 404(존재 자체를 숨긴다).
-
-    소유권이 `sns_posts → video_outputs → store_shorts_projects → stores → users`로
-    네 단계 떨어져 있어 조인으로 한 번에 확인한다.
-    """
-    post = db.scalars(
-        select(SnsPost)
-        .join(VideoOutput, VideoOutput.id == SnsPost.video_output_id)
-        .join(ShortsProject, ShortsProject.id == VideoOutput.shorts_project_id)
-        .join(Store, Store.id == ShortsProject.store_id)
-        .where(SnsPost.id == post_id, Store.user_id == owner.id)
-    ).first()
-    if post is None:
-        raise SnsPostNotFound
-    return post
 
 
 # ---------------------------------------------------------------- 17.1 지표 조회

@@ -8,6 +8,8 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.shorts_project import EditReviseRequest, EditReviseResponse
+from app.schemas.sns import PublishRequest, PublishResponse
+from app.services import sns as sns_service
 from app.services import video_edit as edit_service
 
 router = APIRouter(prefix="/video-outputs", tags=["video-outputs"])
@@ -27,4 +29,38 @@ def revise_output(
         video_output_id=revised.id,
         render_status=revised.render_status,
         revision_id=edit_service.revision_number(db, revised),
+    )
+
+
+@router.post("/{output_id}/publish", response_model=PublishResponse)
+def publish_output(
+    output_id: int, payload: PublishRequest, user: CurrentUser, db: DbSession
+) -> PublishResponse:
+    """게시 기록을 남긴다 (API명세서 16.2).
+
+    **`HANDOFF`는 실제로 플랫폼에 올리지 않는다.** 사장님이 영상을 내려받아 앱에서
+    직접 올리고, 서버는 "올렸다"는 사실만 기록한다. 그래서 상태가 항상
+    `PENDING_LINK`로 시작하며, 16.3으로 실제 게시물을 연결해야 `LINKED`가 된다.
+
+    이 기록이 필요한 이유는 **성과 조회(17.x)의 출발점**이기 때문이다.
+
+    `DIRECT`(서버가 대신 게시)는 플랫폼 앱 검수를 통과해야 동작하므로 지금은
+    400으로 막는다.
+    """
+    output = sns_service.get_owned_output(db, user, output_id)
+    post = sns_service.publish(
+        db,
+        user,
+        output,
+        platform=payload.platform,
+        publish_mode=payload.publish_mode.value,
+        connection_id=payload.sns_connection_id,
+        caption=payload.post_caption,
+        hashtags=payload.post_hashtags,
+    )
+    return PublishResponse(
+        sns_post_id=post.id,
+        post_platform=post.post_platform,
+        post_status=post.post_status,
+        created_at=post.created_at,
     )

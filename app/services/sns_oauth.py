@@ -1,0 +1,162 @@
+"""SNS 플랫폼 OAuth 어댑터 (API명세서 16.1).
+
+**플랫폼마다 다른 것을 이 파일에만 모은다** — 인증 URL 주소, 스코프 이름, 토큰 교환
+방식, 계정 이름을 어디서 읽는지가 전부 다르다. 라우터·서비스는 `PlatformOAuth`
+인터페이스만 보고 동작한다(외부 검색을 `store_search.py`로 뺀 것과 같은 구조).
+
+**연동은 Instagram·YouTube 두 곳만 지원한다**(2026-08-24 확정). 게시(16.2)는 NAVER
+Clip·TikTok도 되지만, 그 둘은 성과 지표를 가져올 API 경로가 없어 연동 대상이 아니다.
+"""
+
+from dataclasses import dataclass
+from http import HTTPStatus
+from urllib.parse import urlencode
+
+import httpx
+
+from app.core.config import settings
+from app.core.exceptions import AppError, BadRequestError
+
+# 콜백 경로. 플랫폼 개발자 콘솔에 등록한 리디렉션 URI와 **정확히** 같아야 한다 —
+# 한 글자만 달라도 플랫폼이 리다이렉트를 거부한다.
+CALLBACK_PATH = "/sns-connections/callback"
+
+
+class UnsupportedPlatform(BadRequestError):
+    error_code = "UNSUPPORTED_PLATFORM"
+    message = "지원하지 않는 플랫폼입니다. INSTAGRAM 또는 YOUTUBE만 연동할 수 있습니다."
+
+
+class SnsNotConfigured(AppError):
+    """서버에 그 플랫폼 키가 없다. **사용자 잘못이 아니다.**
+
+    연동을 *시작할 때* 막는다 — 키 없이 인증 URL을 만들면 사장님이 플랫폼 로그인
+    화면까지 갔다가 거기서 실패한다. 그때는 무엇이 잘못됐는지 알 방법이 없다.
+    """
+
+    status_code = HTTPStatus.SERVICE_UNAVAILABLE
+    error_code = "SNS_NOT_CONFIGURED"
+    message = "지금은 연동할 수 없습니다. 잠시 후 다시 시도해주세요."
+
+
+class SnsAuthFailed(BadRequestError):
+    error_code = "SNS_AUTH_FAILED"
+    message = "SNS 연동에 실패했습니다. 다시 시도해주세요."
+
+
+@dataclass(frozen=True)
+class OAuthTokens:
+    """플랫폼이 돌려준 토큰과 계정 정보."""
+
+    access_token: str
+    refresh_token: str | None = None
+    expires_in: int | None = None
+    account_name: str | None = None
+
+
+@dataclass(frozen=True)
+class PlatformOAuth:
+    platform: str
+    authorize_url: str
+    token_url: str
+    scopes: tuple[str, ...]
+    client_id: str
+    client_secret: str
+
+    def build_authorize_url(self, state: str, redirect_uri: str) -> str:
+        params = {
+            "client_id": self.client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(self.scopes),
+            "state": state,
+        }
+        if self.platform == "YOUTUBE":
+            # 구글은 이 둘이 있어야 refresh_token을 준다. 없으면 액세스 토큰이 만료된 뒤
+            # 사장님에게 재로그인을 요구해야 해서, 주기적 지표 수집이 끊긴다.
+            params["access_type"] = "offline"
+            params["prompt"] = "consent"
+        return f"{self.authorize_url}?{urlencode(params)}"
+
+
+_PLATFORMS = {
+    "INSTAGRAM": {
+        "authorize_url": "https://www.instagram.com/oauth/authorize",
+        "token_url": "https://api.instagram.com/oauth/access_token",
+        # 게시물 인사이트를 읽으려면 basic과 insights가 함께 필요하다.
+        "scopes": ("instagram_business_basic", "instagram_business_manage_insights"),
+    },
+    "YOUTUBE": {
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        # yt-analytics는 지표, youtube.readonly는 "어느 영상인지"를 찾는 데 쓴다.
+        "scopes": (
+            "https://www.googleapis.com/auth/yt-analytics.readonly",
+            "https://www.googleapis.com/auth/youtube.readonly",
+        ),
+    },
+}
+
+
+def redirect_uri() -> str:
+    """콜백 주소. 배포 도메인이 정해지면 `.env`의 값만 바꾸면 된다."""
+    base = settings.SNS_REDIRECT_BASE_URL or settings.MEDIA_BASE_URL
+    return f"{base.rstrip('/')}{CALLBACK_PATH}"
+
+
+def get_platform(platform: str) -> PlatformOAuth:
+    """플랫폼 설정을 돌려준다. 지원하지 않으면 400, 키가 없으면 503."""
+    config = _PLATFORMS.get(platform)
+    if config is None:
+        raise UnsupportedPlatform
+
+    client_id = getattr(settings, f"{platform}_CLIENT_ID", "")
+    client_secret = getattr(settings, f"{platform}_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        raise SnsNotConfigured
+
+    return PlatformOAuth(
+        platform=platform,
+        client_id=client_id,
+        client_secret=client_secret,
+        **config,  # type: ignore[arg-type]
+    )
+
+
+def exchange_code(platform: PlatformOAuth, code: str) -> OAuthTokens:
+    """인증 코드를 액세스 토큰으로 바꾼다.
+
+    **App Secret이 들어가는 유일한 호출이라 반드시 서버에서 한다.** 앱에 시크릿을
+    넣으면 디컴파일로 꺼낼 수 있어, 2026-08-23에 이 구조로 바꿨다.
+    """
+    payload = {
+        "client_id": platform.client_id,
+        "client_secret": platform.client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri(),
+    }
+    try:
+        response = httpx.post(
+            platform.token_url,
+            data=payload,
+            timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise SnsAuthFailed from error
+
+    access_token = body.get("access_token")
+    if not access_token:
+        raise SnsAuthFailed
+
+    return OAuthTokens(
+        access_token=access_token,
+        refresh_token=body.get("refresh_token"),
+        expires_in=body.get("expires_in"),
+        # 계정 이름은 플랫폼마다 다른 곳에 있고, 없으면 별도 호출이 필요하다.
+        # 지금은 토큰 응답에 실려 오는 경우만 취하고 없으면 비워둔다 —
+        # 목록(16.1)에서 구분용으로 쓰는 값이라 없어도 동작에 지장이 없다.
+        account_name=body.get("username") or body.get("user_id"),
+    )

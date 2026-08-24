@@ -24,6 +24,8 @@ MAX_PASSWORD_BYTES = 72
 class TokenType(StrEnum):
     ACCESS = "access"
     REFRESH = "refresh"
+    # SNS 연동(16.1) OAuth의 위조 방지용 state. 아래 create_oauth_state 참고.
+    OAUTH_STATE = "oauth_state"
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,62 @@ def create_refresh_token(user_id: int) -> IssuedToken:
         TokenType.REFRESH,
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
+
+
+@dataclass(frozen=True)
+class OAuthState:
+    """OAuth `state`에 담는 정보 (API명세서 16.1)."""
+
+    user_id: int
+    platform: str
+
+
+def create_oauth_state(user_id: int, platform: str) -> str:
+    """SNS 연동 인증 URL에 넣을 `state` 값을 만든다.
+
+    **`state`는 CSRF를 막는 값이다.** 공격자가 자기 계정의 인증 코드를 피해자 브라우저로
+    흘려보내면, 피해자 계정에 공격자의 SNS가 연결될 수 있다. 서버가 만든 값이 그대로
+    돌아왔는지 확인해 이를 막는다.
+
+    **DB에 저장하지 않고 서명된 토큰에 담는다**(2026-08-24 결정). 테이블을 만들면
+    "언제 지우나"라는 문제가 따라붙는다 — 사용자가 동의 화면에서 이탈하면 그 행은
+    영원히 남는다. 서명 토큰은 만료가 값 자체에 들어 있어 정리할 게 없다.
+
+    **누가 어느 플랫폼을 연동하려 했는지도 함께 담는다.** 콜백에는 우리 액세스 토큰이
+    실려 오지 않으므로(플랫폼이 리다이렉트하는 요청이다), 여기 없으면 어느 사용자의
+    연동인지 알 수 없다.
+
+    수명은 10분이다 — 동의 화면에서 로그인하고 승인하기에 충분하면서, 유출돼도
+    쓸 수 있는 시간을 짧게 둔다.
+    """
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user_id),
+        "type": TokenType.OAUTH_STATE.value,
+        "platform": platform,
+        "jti": str(uuid.uuid4()),
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=10)).timestamp()),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_oauth_state(state: str) -> OAuthState:
+    """`state`를 검증하고 사용자·플랫폼을 돌려준다. 만료·위조는 401이다."""
+    try:
+        payload = jwt.decode(state, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError as exc:
+        raise TokenExpired from exc
+    except jwt.PyJWTError as exc:
+        raise InvalidToken from exc
+
+    if payload.get("type") != TokenType.OAUTH_STATE.value:
+        raise InvalidToken
+
+    try:
+        return OAuthState(user_id=int(payload["sub"]), platform=str(payload["platform"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidToken from exc
 
 
 def decode_token(token: str, expected_type: TokenType) -> TokenPayload:
