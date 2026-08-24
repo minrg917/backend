@@ -111,6 +111,23 @@ sudo certbot --nginx -d 실제도메인
 
 5. **보안 그룹에서 8000 포트 규칙을 제거**합니다. nginx가 앞에 섰으니 직접 열어둘 이유가 없습니다.
 
+## 4.5. (선택) 가게 자동 메뉴 수집용 Chrome 설치
+
+가게 등록 시 카카오맵에서 대표 메뉴 몇 개를 자동으로 가져오는 기능이 있다(2026-08-24
+추가). **안 해도 API는 정상 동작한다** — 이 단계를 건너뛰면 메뉴 자동 수집만 조용히
+꺼진 채로 돌고, 사장님은 3.2로 직접 입력하면 된다.
+
+```bash
+sudo apt install -y chromium-browser
+.venv/bin/poetry install --without dev --with crawler
+```
+
+`--with crawler`가 `selenium`·`webdriver-manager`를 이 프로젝트의 `.venv`에 설치한다.
+API 프로세스가 백그라운드 작업에서 이 인터프리터(`sys.executable`)로 크롤링 스크립트를
+서브프로세스로 띄우기 때문에, **같은 가상환경에 설치돼 있어야** 인식한다.
+
+자세한 설계는 `docs/IMPLEMENTATION.md`의 2026-08-24 항목 참고.
+
 ## 5. 초기 데이터
 
 포맷이 없으면 홈 피드가 비어 보입니다.

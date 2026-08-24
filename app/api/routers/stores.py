@@ -4,10 +4,11 @@ from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated, TypeVar
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession
+from app.db.session import SessionLocal
 from app.schemas.common import MessageResponse
 from app.schemas.store import (
     ImportStatusResponse,
@@ -35,6 +36,7 @@ from app.schemas.store import (
     TargetCustomerUpdateRequest,
     TargetCustomerUpdateResponse,
 )
+from app.services import menu_crawl as menu_crawl_service
 from app.services import store as store_service
 from app.services import store_insight as insight_service
 from app.services import store_menu as menu_service
@@ -86,10 +88,21 @@ async def search_stores(
 
 @router.post("", response_model=StoreCreateResponse, status_code=HTTPStatus.CREATED)
 def create_store(
-    payload: StoreCreateRequest, user: CurrentUser, db: DbSession
+    payload: StoreCreateRequest, user: CurrentUser, db: DbSession, background_tasks: BackgroundTasks
 ) -> StoreCreateResponse:
-    """가게를 등록한다. 후보확정 / 직접입력 / URL보완 세 경로를 함께 처리한다."""
+    """가게를 등록한다. 후보확정 / 직접입력 / URL보완 세 경로를 함께 처리한다.
+
+    검색 단계에서 카카오 플레이스 링크가 잡혀 있으면, 응답을 내보낸 뒤
+    백그라운드로 대표 메뉴 몇 개를 자동으로 채운다(실패해도 등록에는 영향 없음).
+    """
     store = store_service.create_store(db, user, payload)
+
+    place_id = menu_crawl_service.kakao_place_id(store)
+    if place_id:
+        background_tasks.add_task(
+            menu_crawl_service.enrich_menu_from_kakao, store.id, place_id, SessionLocal
+        )
+
     status = store_service.get_import_status(db, store)
     return StoreCreateResponse(
         id=store.id,

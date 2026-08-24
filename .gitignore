@@ -54,6 +54,9 @@ media/
 *.log
 logs/
 
+# ---- 크롤링 디버그 산출물 (scripts/crawl_*_menu.py 실행 시 생김) ----
+*_crawl_debug*
+
 # ---- IDE ----
 .vscode/
 .idea/
