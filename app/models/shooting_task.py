@@ -8,10 +8,9 @@ ERD에 `created_at`이 없고 `updated_at`만 있다. 보드 정렬은 `display_
 """
 
 from datetime import datetime
-from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import DECIMAL, JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -84,18 +83,6 @@ class ShootingTask(Base):
     )
     footage_duration_sec: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="촬영본 길이(초)"
-    )
-    ai_eval_score: Mapped[Decimal | None] = mapped_column(
-        DECIMAL(5, 2), nullable=True, comment="AI 평가 점수(현재 촬영본 기준, 참고값)"
-    )
-    ai_is_usable: Mapped[bool | None] = mapped_column(
-        nullable=True, comment="현재 촬영본의 편집 사용 가능 여부"
-    )
-    ai_eval_issues: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="AI가 발견한 문제점/개선 제안"
-    )
-    ai_evaluated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, comment="AI 평가 수행 시각(UTC)"
     )
     # 촬영 안내. 7.1이 태스크와 함께 저장하고 9.1이 조합해 내려준다.
     # AI 응답 형식이 확정 전이라 컬럼을 쪼개지 않고 JSON으로 둔다.

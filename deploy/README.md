@@ -53,13 +53,13 @@ DB_USER=admin
 DB_PASSWORD=
 DB_NAME=sarils
 
-CORS_ORIGINS=https://실제도메인
+CORS_ORIGINS=https://sarils.p-e.kr
 
 STORAGE_BACKEND=s3
 S3_BUCKET=sarils-s3
 S3_REGION=ap-northeast-2
-MEDIA_BASE_URL=https://실제도메인
-SNS_REDIRECT_BASE_URL=https://실제도메인
+MEDIA_BASE_URL=https://sarils.p-e.kr
+SNS_REDIRECT_BASE_URL=https://sarils.p-e.kr
 
 # **비워둡니다.** EC2에 IAM 역할(sarils-ec2-role)이 붙어 있어 boto3가 알아서 찾습니다.
 AWS_ACCESS_KEY_ID=
@@ -104,7 +104,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d 실제도메인
+sudo certbot --nginx -d sarils.p-e.kr
 ```
 
 갱신은 certbot이 설치한 타이머가 알아서 합니다(`systemctl list-timers | grep certbot`).
@@ -142,7 +142,7 @@ API 프로세스가 백그라운드 작업에서 이 인터프리터(`sys.execut
 달라도 플랫폼이 리다이렉트를 거부합니다.
 
 ```
-https://실제도메인/sns-connections/callback
+https://sarils.p-e.kr/sns-connections/callback
 ```
 
 - **Google Cloud Console** → 사용자 인증 정보 → OAuth 클라이언트 → 승인된 리디렉션 URI에 **추가**
@@ -222,7 +222,7 @@ echo "ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-api" | \
 
 ## 프론트에 알려야 할 것
 
-- **API Base URL**: `https://실제도메인` — 지금까지 명세서에 없던 값입니다
+- **API Base URL**: `https://sarils.p-e.kr` — 지금까지 명세서에 없던 값입니다
 - 파일 URL이 **S3 주소**로 바뀝니다. 응답의 URL을 그대로 쓰면 됩니다
 
 ## 주의할 점

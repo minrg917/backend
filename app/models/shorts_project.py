@@ -77,6 +77,13 @@ class ShortsProject(Base, TimestampMixin):
     project_title: Mapped[str | None] = mapped_column(
         String(200), nullable=True, comment="AI가 지은 프로젝트 제목 - 7.1 결과"
     )
+    # R06(숏폼 Agent) 6.4 수락 시 저장. AI 문서(`docs/AI_연동_입출력.md` 11번)가
+    # "Backend는 현재 Recommendation에서 recommendation_id를 프로젝트에 저장한다"고
+    # 명시한다 — 16번(편집 실행 생성) 요청의 `selected_shortform.recommendation_id`로
+    # 다시 필요해질 값이라 지금부터 보관해둔다. 화면에 노출하는 값이 아니다.
+    recommendation_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="R06 수락 시점의 AI 추천 ID(내부용, R14 연동 시 재사용)"
+    )
     promotion_purpose: Mapped[PromotionPurpose | None] = mapped_column(
         String(50), nullable=True, comment="홍보 목적(메뉴소개/이벤트알리기/가게소개/고객늘리기)"
     )

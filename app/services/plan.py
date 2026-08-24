@@ -19,7 +19,7 @@ class SceneNotInProject(BadRequestError):
 
 
 def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> ShortsProject:
-    """포맷을 프로젝트에 연결하고 AI 기획을 생성한다 (API명세서 7.1).
+    """포맷을 프로젝트에 연결하고 촬영 가이드로 콘티·태스크를 만든다 (API명세서 7.1).
 
     **`video_format_id`를 저장하는 유일한 경로다**(2026-08-23 확정). 4.2 PATCH에는
     이 필드가 없다.
@@ -29,12 +29,19 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
 
     **재호출하면 기존 장면·태스크를 지우고 새로 넣는다.** 포맷을 바꿔 다시 만들었을 때
     옛 데이터가 남아 섞이면 사장님이 찍지 않아도 될 컷을 찍게 된다.
+
+    2026-08-26: R06(숏폼 Agent) 6.4(추천 수락)도 이 함수를 그대로 재사용한다 —
+    AI팀 지침(`docs/AI_연동_입출력.md` 13번, "기존 기획·콘티 생성 방식은 사용하지
+    않는다")에 따라 AI 호출을 `generate_plan`(즉석 생성)에서 `get_shooting_guide`
+    (템플릿 조회)로 바꿨다. 콘티 내용 자체는 가게별로 다시 만들어지지 않고 템플릿에
+    고정돼 있지만, AI팀이 "가게/프로젝트 컨텍스트도 함께 넘겨달라"고 확인해줘서
+    (2026-08-26) `store`도 함께 조회해 넘긴다.
     """
     video_format = get_format(db, video_format_id)  # 없는 포맷이면 404
     store = db.get(Store, project.store_id)
     assert store is not None  # 프로젝트가 있으면 가게도 있다(FK)
 
-    plan = ai_client.generate_plan(store, video_format)
+    guide = ai_client.get_shooting_guide(video_format, store, project)
 
     # 기존 장면·태스크 제거 후 재생성. 같은 트랜잭션에서 처리해 중간 상태가 남지 않게 한다.
     # 태스크를 함께 지우지 않으면 옛 포맷의 태스크가 남아 찍지 않아도 될 컷을 찍게 된다.
@@ -51,7 +58,7 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
             shot_type=scene.shot_type,
             target_duration_sec=scene.target_duration_sec,
         )
-        for scene in plan.scenes
+        for scene in guide.scenes
     ]
     db.add_all(scenes)
     # 태스크가 장면을 FK로 참조하므로 id를 먼저 확보한다.
@@ -71,18 +78,15 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
             display_order=task.display_order,
             guide=task.guide,
         )
-        for task in plan.tasks
+        for task in guide.tasks
     )
 
     project.video_format_id = video_format.id
-    # AI가 제목을 안 주면(연동 전 placeholder) 기존 값을 지우지 않는다 — 재기획으로
-    # 멀쩡한 제목이 사라지면 목록 카드가 도로 "메뉴소개"로 돌아간다.
-    if plan.project_title:
-        project.project_title = plan.project_title
-    project.estimated_shooting_sec = plan.estimated_shooting_sec
-    project.required_people = plan.required_people
-    project.props = plan.props
-    project.shooting_difficulty = plan.difficulty
+    project.estimated_shooting_sec = guide.estimated_shooting_sec
+    # 템플릿의 고정 메타데이터다 — 사용자가 입력하는 값이 아니다(2026-08-26 AI팀 확인).
+    project.required_people = guide.required_people
+    project.props = guide.props
+    project.shooting_difficulty = guide.difficulty
     db.commit()
     db.refresh(project)
     return project

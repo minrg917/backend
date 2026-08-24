@@ -122,7 +122,10 @@ def create_photo(
         file_url=key,
         # AI 자동분류(S03.2.1)가 붙기 전까지는 프론트가 지정하고, 없으면 기타로 둔다
         category=(category or PhotoCategory.ETC).value,
-        has_sensitive_info=False,
+        # AI 판별 전에는 null(미확인). false로 두면 "민감정보 없음"으로 오인될 수 있다
+        # (AI팀 지침, docs/AI_연동_입출력.md 27번 "구현 전까지 false를 안전값으로
+        # 간주해서는 안 된다")
+        has_sensitive_info=None,
     )
     db.add(photo)
     db.commit()
