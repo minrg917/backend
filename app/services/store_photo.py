@@ -140,6 +140,18 @@ def get_photo(db: Session, store: Store, photo_id: int) -> StorePhoto:
     return photo
 
 
+def update_photo_category(db: Session, photo: StorePhoto, category: PhotoCategory) -> StorePhoto:
+    """분류를 사장님이 직접 고친다 (2026-08-26 신설, 기능명세서 S03.2.1).
+
+    AI 자동분류가 붙기 전까지 없던 수정 경로를 메운다 — `docs/PM_DECISIONS.md`
+    "사진 분류 수정 경로 없음" 항목 참고.
+    """
+    photo.category = category.value
+    db.commit()
+    db.refresh(photo)
+    return photo
+
+
 def delete_photo(db: Session, storage: Storage, photo: StorePhoto) -> None:
     """DB 행과 실제 파일을 함께 지운다.
 
