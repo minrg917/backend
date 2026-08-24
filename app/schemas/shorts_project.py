@@ -117,6 +117,8 @@ class ProjectCreateResponse(BaseSchema):
 
 class ProjectSummary(BaseSchema):
     id: int
+    # 7.1 AI 기획 전에는 null이다. 이때 화면은 promotion_purpose를 라벨로 쓴다.
+    project_title: str | None
     promotion_purpose: PromotionPurpose | None
     shorts_status: ShortsStatus
     updated_at: UtcDatetime
@@ -167,6 +169,7 @@ class ProjectSettingsResponse(BaseSchema):
 class ProjectDetailResponse(BaseSchema):
     id: int
     store_id: int
+    project_title: str | None
     video_format_id: int | None
     store_target_customer_id: int | None
     menu_id: int | None

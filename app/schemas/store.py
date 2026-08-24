@@ -319,7 +319,8 @@ class LogoUploadResponse(BaseSchema):
 class StoreShortItem(BaseSchema):
     video_output_id: int
     shorts_project_id: int
-    # 프로젝트에는 제목 컬럼이 없다 — 4.1 목록과 같이 홍보 목적을 카드 라벨로 쓴다
+    # 7.1 AI 기획이 지어준 제목. 없으면 화면은 promotion_purpose를 라벨로 쓴다.
+    project_title: str | None
     promotion_purpose: str | None
     video_url: str | None
     cover_image_url: str | None

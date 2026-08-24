@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.models.shorts_project import ShortsProject
 from app.models.video_format import VideoFormat
 
 STORE_BODY: dict[str, Any] = {
@@ -360,3 +361,35 @@ def test_scenes_hidden_from_other_user(
         client.get(f"/shorts-projects/{project_id}/scenes", headers=other_headers).status_code
         == 404
     )
+
+
+def test_plan_leaves_title_null_without_ai(
+    client: TestClient, auth_headers: dict[str, str], project_id: int
+) -> None:
+    """AI 연동 전에는 제목을 지어내지 않는다 — 목록 카드에 가짜 제목이 뜨면 안 된다."""
+    body = client.get(f"/shorts-projects/{project_id}", headers=auth_headers).json()
+
+    assert body["project_title"] is None
+
+
+def test_replanning_keeps_existing_title(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    db_session: Session,
+    project_id: int,
+    formats: list[VideoFormat],
+) -> None:
+    """AI가 제목을 안 주는 재기획으로 멀쩡한 제목이 사라지면 카드가 도로 밋밋해진다."""
+    project = db_session.get(ShortsProject, project_id)
+    assert project is not None
+    project.project_title = "신메뉴 로제떡볶이 가격 맞히기"
+    db_session.commit()
+
+    client.post(
+        f"/shorts-projects/{project_id}/plan",
+        json={"video_format_id": formats[0].id},
+        headers=auth_headers,
+    )
+
+    body = client.get(f"/shorts-projects/{project_id}", headers=auth_headers).json()
+    assert body["project_title"] == "신메뉴 로제떡볶이 가격 맞히기"
