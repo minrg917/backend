@@ -29,16 +29,14 @@ def list_formats(
 ) -> list[VideoFormat]:
     """포맷 목록을 조건에 맞춰 돌려준다.
 
-    **정렬은 현재 전부 최신순이다.** 인기·급상승 랭킹은 AI 서버가 포맷 목록과 함께
-    내려줄 예정이라 우리 DB에는 조회수 데이터가 없다. 파라미터는 계약대로 받아두고
-    AI 연동 시 순서만 교체한다.
+    **`trending`은 AI 트렌드 클러스터 순위를 따른다**(`trend_rank`, 1이 가장 높음).
+    순위가 없는 포맷(R06 추천으로 적재된 편집 템플릿 등)은 순위가 있는 것들 뒤로
+    밀고 그 안에서는 최신순이다. `views`는 조회수 데이터가 아직 없어 최신순이다.
 
     **`is_active`인 것만 보여준다** — R06(숏폼 Agent)과 같은 카탈로그를 쓰기로
     확인됐고(2026-08-26), Agent 추천이 ACTIVE 템플릿으로 한정되므로 피드도 같은
     기준으로 맞춘다.
     """
-    del sort  # 랭킹 데이터가 생기기 전까지는 정렬 기준을 구분하지 않는다
-
     statement = select(VideoFormat).where(VideoFormat.is_active.is_(True))
     if format_type:
         statement = statement.where(VideoFormat.format_type == format_type)
@@ -49,7 +47,15 @@ def list_formats(
 
     size = min(max(size, 1), MAX_PAGE_SIZE)
     offset = max(page - 1, 0) * size
-    statement = statement.order_by(VideoFormat.created_at.desc(), VideoFormat.id.desc())
+    latest = (VideoFormat.created_at.desc(), VideoFormat.id.desc())
+    if sort is FormatSort.TRENDING:
+        # `nulls_last()`는 MySQL 8이 지원하지 않는다. "NULL이냐"를 먼저 정렬하면
+        # False(0)가 앞서므로 MySQL·SQLite 어디서나 같은 순서가 나온다.
+        statement = statement.order_by(
+            VideoFormat.trend_rank.is_(None), VideoFormat.trend_rank.asc(), *latest
+        )
+    else:
+        statement = statement.order_by(*latest)
     return list(db.scalars(statement.offset(offset).limit(size)))
 
 
