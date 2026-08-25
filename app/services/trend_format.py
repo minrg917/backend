@@ -19,6 +19,20 @@ from app.models.video_format import VideoFormat
 from app.services import ai_client
 
 
+def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChallenge) -> None:
+    """Apply only values the AI actually supplied; never erase curated data with null."""
+
+    for field in (
+        "format_type",
+        "expected_duration_sec",
+        "shooting_difficulty",
+        "face_exposure_level",
+    ):
+        value = getattr(challenge, field)
+        if value is not None:
+            setattr(video_format, field, value)
+
+
 def sync_trend_formats(db: Session) -> tuple[int, int, int]:
     """트렌드 클러스터를 받아 포맷 카탈로그에 반영한다.
 
@@ -47,28 +61,27 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
             )
 
         if video_format is None:
-            db.add(
-                VideoFormat(
-                    format_title=challenge.name,
-                    reference_url=reference_url,
-                    guide_video_url=challenge.guide_youtube_url,
-                    source_platform="YOUTUBE",
-                    trend_challenge_id=challenge.id,
-                    trend_rank=challenge.rank,
-                )
+            video_format = VideoFormat(
+                format_title=challenge.name,
+                reference_url=reference_url,
+                guide_video_url=challenge.guide_youtube_url,
+                source_platform="YOUTUBE",
+                trend_challenge_id=challenge.id,
+                trend_rank=challenge.rank,
             )
+            _apply_ai_metadata(video_format, challenge)
+            db.add(video_format)
             added += 1
             continue
 
-        # 이름·URL·순위는 AI가 갱신하는 값이라 매번 덮어쓴다.
-        # 나머지 메타데이터(유형·소요시간·난이도·얼굴노출)는 트렌드 클러스터에 없어
-        # 건드리지 않는다 — 사람이 채워 둔 값을 지우지 않기 위해서다.
+        # AI가 제공한 값은 매번 갱신하되, null은 사람이 채운 값을 지우지 않는다.
         video_format.format_title = challenge.name
         video_format.reference_url = reference_url
         video_format.guide_video_url = challenge.guide_youtube_url
         video_format.source_platform = "YOUTUBE"
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
+        _apply_ai_metadata(video_format, challenge)
         updated += 1
 
     db.commit()

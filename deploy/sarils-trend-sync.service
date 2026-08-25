@@ -1,0 +1,17 @@
+[Unit]
+Description=Synchronize AI trend challenges into SARILS video formats
+After=network-online.target sarils-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/backend
+EnvironmentFile=/home/ubuntu/backend/.env
+ExecStart=/home/ubuntu/backend/.venv/bin/python -m scripts.sync_trend_formats
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/backend

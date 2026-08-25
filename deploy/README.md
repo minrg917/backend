@@ -73,8 +73,10 @@ AWS_SECRET_ACCESS_KEY=
 
 ```bash
 sudo cp deploy/sarils-api.service /etc/systemd/system/
+sudo cp deploy/sarils-trend-sync.service deploy/sarils-trend-sync.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now sarils-api
+sudo systemctl enable --now sarils-trend-sync.timer
 
 systemctl status sarils-api
 curl http://127.0.0.1:8000/health      # {"status":"ok","database":"ok"}
@@ -84,6 +86,15 @@ curl http://127.0.0.1:8000/health      # {"status":"ok","database":"ok"}
 실패하면 서비스가 뜨지 않습니다** — 스키마가 어긋난 채 요청을 받는 것보다 낫습니다.
 
 로그는 `journalctl -u sarils-api -f`로 봅니다.
+
+트렌드 포맷은 AI 서버에서 15분마다 자동 동기화됩니다. 즉시 동기화하거나 최근 실행을
+확인할 때는 아래 명령을 사용합니다.
+
+```bash
+sudo systemctl start sarils-trend-sync.service
+systemctl list-timers sarils-trend-sync.timer
+journalctl -u sarils-trend-sync.service -n 50
+```
 
 ## 4. nginx + 도메인 + HTTPS
 
