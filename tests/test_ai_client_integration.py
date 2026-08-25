@@ -133,6 +133,86 @@ def test_shooting_guide_builds_tasks_when_template_only_has_scenes(
     assert guide.tasks[0].scene_index == 0
 
 
+def test_shooting_guide_defaults_task_type_and_guide_type_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AI가 task_type/guide_type을 안 줘도 안전한 기본값으로 채운다(2026-08-26 합의)."""
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "scenes": [{"scene_order": 1, "scene_description": "완성 메뉴"}],
+            "tasks": [
+                {
+                    "display_order": 1,
+                    "task_title": "완성 메뉴 촬영",
+                    "shooting_scene_order": 1,
+                    "guide": {"instructions": ["메뉴가 화면 중앙에 보이도록 촬영하세요."]},
+                }
+            ],
+        },
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_014",
+        editing_template_version=1,
+        format_title="메뉴 소개",
+        reference_url="internal://template",
+    )
+
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        Store(id=10, user_id=1, name="행복분식"),
+        ShortsProject(id=30, store_id=10),
+    )
+
+    task = guide.tasks[0]
+    assert task.task_type == "영상촬영"
+    assert task.guide is not None
+    assert task.guide["guide_type"] == "OVERLAY"
+    assert task.guide["instructions"] == ["메뉴가 화면 중앙에 보이도록 촬영하세요."]
+
+
+def test_shooting_guide_keeps_task_type_and_guide_type_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AI가 값을 직접 주면 기본값으로 덮어쓰지 않는다."""
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "scenes": [{"scene_order": 1, "scene_description": "안무"}],
+            "tasks": [
+                {
+                    "display_order": 1,
+                    "task_title": "안무 촬영",
+                    "task_type": "안무",
+                    "shooting_scene_order": 1,
+                    "guide": {"guide_type": "DANCE", "instructions": []},
+                }
+            ],
+        },
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_dance",
+        editing_template_version=1,
+        format_title="댄스 챌린지",
+        reference_url="internal://template",
+    )
+
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        Store(id=10, user_id=1, name="행복분식"),
+        ShortsProject(id=30, store_id=10),
+    )
+
+    task = guide.tasks[0]
+    assert task.task_type == "안무"
+    assert task.guide is not None
+    assert task.guide["guide_type"] == "DANCE"
+
+
 def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
