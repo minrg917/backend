@@ -223,8 +223,16 @@ jobs:
             git checkout main
             git reset --hard origin/main
             .venv/bin/poetry install --without dev
+            sudo install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
+            sudo systemctl daemon-reload
             sudo systemctl restart sarils-api
+            sudo systemctl enable --now sarils-trend-sync.timer
 ```
+
+`sarils-api`를 먼저 재시작해 마이그레이션을 끝낸 뒤 트렌드 동기화 타이머를 켠다 —
+순서가 반대면 `enable --now`가 트리거하는 첫 실행이 아직 없는 컬럼을 찾다가 실패한다
+(2026-08-25 PR #70 첫 배포에서 발견).
 
 `main`에 push될 때만 배포한다 — `develop`이 아니다. feature/fix는 `develop`으로 계속
 쌓이고, `develop → main` PR을 머지하는 "배포 시점"에만 실서버가 갱신된다. `git pull` 대신
@@ -233,9 +241,21 @@ jobs:
 `sudo systemctl restart`가 비밀번호 없이 되도록 sudoers에 한 줄이 필요합니다.
 
 ```bash
-echo "ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-api" | \
-    sudo tee /etc/sudoers.d/sarils-deploy
+sudo tee /etc/sudoers.d/sarils-deploy > /dev/null <<'EOF'
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-api
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl daemon-reload
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable --now sarils-trend-sync.timer
+EOF
+sudo chmod 0440 /etc/sudoers.d/sarils-deploy
+sudo visudo -c
 ```
+
+배포 스크립트가 새 `sudo` 명령을 쓸 때마다 여기에 한 줄씩 추가해야 한다 — 화이트리스트에
+없는 명령은 비밀번호를 요구하다 자동배포가 그대로 실패한다(2026-08-25 PR #69 배포 때
+발견). `sudoers.d` 파일은 **권한이 정확히 `0440`이어야** `visudo`가 읽는다 — `cp`로 덮어쓰면
+기본 권한(`0644`)이 돼서 통째로 무시된다.
 
 - **`.env`는 서버에만 둡니다.** Actions가 건드리지 않습니다.
 - 현재 CI는 `pull_request`에만 걸려 있어 **머지 후에는 테스트 없이 배포됩니다.**
