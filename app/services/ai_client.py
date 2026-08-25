@@ -247,6 +247,19 @@ def is_enabled() -> bool:
     return bool(settings.AI_SERVER_URL)
 
 
+def _with_default_guide_type(guide: dict[str, Any] | None) -> dict[str, Any] | None:
+    """AI가 `guide_type`을 안 주면 `OVERLAY`로 채운다.
+
+    지금 AI가 만드는 태스크가 전부 영상촬영형(오버레이 안내)이라 `guide_type`을
+    직접 못 준다고 확인했다(2026-08-26, `docs/PM_DECISIONS.md`). 값이 오면 그대로
+    쓰고, 없을 때만 기본값을 채운다 — 나중에 AI가 DANCE/BROLL을 구분해서 주기
+    시작해도 이 함수만 자연히 통과시키면 된다.
+    """
+    if guide is None:
+        return None
+    return {**guide, "guide_type": guide.get("guide_type") or "OVERLAY"}
+
+
 def get_shooting_guide(
     video_format: VideoFormat, store: Store, project: ShortsProject
 ) -> ShootingGuide:
@@ -300,9 +313,11 @@ def get_shooting_guide(
             PlannedTask(
                 display_order=int(item.get("display_order") or index),
                 task_title=str(item.get("task_title") or item.get("title") or "촬영 태스크"),
-                task_type=item.get("task_type"),
+                # AI가 못 주면 "영상촬영"으로 채운다 — 지금 AI가 만드는 태스크가 전부
+                # 이 유형이라고 확인했다(2026-08-26, docs/PM_DECISIONS.md).
+                task_type=item.get("task_type") or "영상촬영",
                 scene_index=int(scene_index) if scene_index is not None else None,
-                guide=item.get("guide"),
+                guide=_with_default_guide_type(item.get("guide")),
             )
         )
     if not tasks:
