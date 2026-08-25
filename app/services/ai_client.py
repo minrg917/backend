@@ -101,6 +101,23 @@ def _request_json(
     return payload
 
 
+_FACE_EXPOSURE_TOKENS = {
+    "노출있음": "allowed",
+    "노출없음": "not_allowed",
+}
+
+
+def _map_face_exposure(value: str | None) -> str:
+    """한국어 얼굴노출모드를 AI 쪽 영문 토큰으로 바꾼다.
+
+    우리 쪽은 노출있음/노출없음 2가지만 구분하기로 확정됐다(2026-08-25). AI 문서가
+    실제로 확인해준 값은 "not_allowed" 하나뿐이라 "allowed"는 이름 대칭으로 추정한
+    값이다 — AI팀 확인 전까지는 잠정치. 모르는 값(구버전 4모드 잔재 등)이 오면 동의
+    안 된 얼굴을 노출시키는 쪽보다 안전하게 "not_allowed"로 떨어뜨린다.
+    """
+    return _FACE_EXPOSURE_TOKENS.get(value or "", "not_allowed")
+
+
 def _option(item: dict[str, Any]) -> "SessionOption":
     return SessionOption(id=str(item["id"]), label=str(item["label"]))
 
@@ -433,7 +450,7 @@ def start_editing_run(
                 "store_id": str(store.id),
                 "promotion_subject": subject,
                 "promotion_objective": purpose_map.get(str(project.promotion_purpose), "awareness"),
-                "face_exposure": project.face_exposure_mode or "not_allowed",
+                "face_exposure": _map_face_exposure(project.face_exposure_mode),
             },
             "selected_shortform": {
                 "recommendation_id": project.recommendation_id or f"project_{project.id}",
