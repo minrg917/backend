@@ -148,7 +148,7 @@ def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.Monkey
         menu_id=20,
         recommendation_id="rec_123",
         promotion_purpose=PromotionPurpose.MENU,
-        face_exposure_mode="not_allowed",
+        face_exposure_mode="노출있음",
     )
     video_format = VideoFormat(
         editing_template_id="edit_template_014",
@@ -167,7 +167,17 @@ def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.Monkey
     assert run.run_id == "edit_123"
     body = captured["json_body"]
     assert body["selected_shortform"]["editing_template_version"] == 3
+    # 한국어 얼굴노출모드가 AI 쪽 영문 토큰으로 변환되어야 한다(원문 그대로 보내면 안 됨).
+    assert body["project"]["face_exposure"] == "allowed"
     assert body["videos"][0]["shooting_scene_order"] == 1
+
+
+def test_face_exposure_unknown_value_falls_back_to_not_allowed() -> None:
+    """모르는 값(구버전 4모드 잔재 등)은 동의 안 된 얼굴 노출보다 안전한 쪽으로 떨어진다."""
+    assert ai_client._map_face_exposure(None) == "not_allowed"
+    assert ai_client._map_face_exposure("일부노출") == "not_allowed"
+    assert ai_client._map_face_exposure("노출없음") == "not_allowed"
+    assert ai_client._map_face_exposure("노출있음") == "allowed"
 
 
 def test_editing_result_maps_nested_render(monkeypatch: pytest.MonkeyPatch) -> None:
