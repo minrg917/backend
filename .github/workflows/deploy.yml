@@ -29,4 +29,8 @@ jobs:
             git checkout main
             git reset --hard origin/main
             .venv/bin/poetry install --without dev
+            sudo install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now sarils-trend-sync.timer
             sudo systemctl restart sarils-api

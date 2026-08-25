@@ -30,7 +30,7 @@ def video_format(db_session: Session) -> VideoFormat:
         source_platform="YOUTUBE",
         expected_duration_sec=24,
         shooting_difficulty="하",
-        face_exposure_level="낮음",
+        requires_face=False,
     )
     db_session.add(item)
     db_session.commit()

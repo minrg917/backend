@@ -17,7 +17,7 @@ def _add_format(db: Session, **overrides: Any) -> VideoFormat:
         "source_platform": "YOUTUBE",
         "expected_duration_sec": 25,
         "shooting_difficulty": "하",
-        "face_exposure_level": "낮음",
+        "requires_face": False,
     }
     video_format = VideoFormat(**{**base, **overrides})
     db.add(video_format)
@@ -34,21 +34,21 @@ def formats(db_session: Session) -> list[VideoFormat]:
             format_title="가격 공개 반전 챌린지",
             format_type="밈",
             reference_url="https://youtu.be/1",
-            face_exposure_level="낮음",
+            requires_face=False,
         ),
         _add_format(
             db_session,
             format_title="사장님 메뉴 추천",
             format_type="잔잔한 소개",
             reference_url="https://youtu.be/2",
-            face_exposure_level="높음",
+            requires_face=True,
         ),
         _add_format(
             db_session,
             format_title="가게 한 바퀴",
             format_type="잔잔한 소개",
             reference_url="https://youtu.be/3",
-            face_exposure_level="낮음",
+            requires_face=False,
         ),
     ]
 
@@ -68,7 +68,7 @@ def test_list_returns_spec_fields(
         "format_type",
         "expected_duration_sec",
         "shooting_difficulty",
-        "face_exposure_level",
+        "requires_face",
         "reference_url",
         "guide_video_url",
         "source_platform",
@@ -94,11 +94,11 @@ def test_list_filters_by_format_type(
     assert [f["format_title"] for f in body["formats"]] == ["가격 공개 반전 챌린지"]
 
 
-def test_list_filters_by_face_exposure_level(
+def test_list_filters_by_requires_face(
     client: TestClient, auth_headers: dict[str, str], formats: list[VideoFormat]
 ) -> None:
     body = client.get(
-        "/video-formats", params={"face_exposure_level": "낮음"}, headers=auth_headers
+        "/video-formats", params={"requires_face": False}, headers=auth_headers
     ).json()
 
     assert len(body["formats"]) == 2
@@ -117,7 +117,7 @@ def test_list_combines_filters(
 ) -> None:
     body = client.get(
         "/video-formats",
-        params={"format_type": "잔잔한 소개", "face_exposure_level": "낮음"},
+        params={"format_type": "잔잔한 소개", "requires_face": False},
         headers=auth_headers,
     ).json()
 
@@ -190,7 +190,7 @@ def test_detail_returns_spec_fields(
         "source_platform",
         "expected_duration_sec",
         "shooting_difficulty",
-        "face_exposure_level",
+        "requires_face",
         "is_favorite",
     }
 

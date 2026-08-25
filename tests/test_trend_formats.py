@@ -23,6 +23,10 @@ TRENDCLUSTER: dict[str, Any] = {
             "name": "주술회전 트랜지션",
             "representative_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=abc",
             "guide_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=abc",
+            "format_type": "밈",
+            "expected_duration_sec": 10,
+            "shooting_difficulty": "중",
+            "requires_face": False,
         },
         {
             "id": "cafe_recommendation_reels",
@@ -30,6 +34,10 @@ TRENDCLUSTER: dict[str, Any] = {
             "name": "카페 추천 리뷰 릴스",
             "representative_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
             "guide_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
+            "format_type": "정보형",
+            "expected_duration_sec": 13,
+            "shooting_difficulty": "중",
+            "requires_face": False,
         },
         {
             "id": "otsukare_summer_challenge",
@@ -37,6 +45,10 @@ TRENDCLUSTER: dict[str, Any] = {
             "name": "오츠카레 썸머 챌린지",
             "representative_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik",
             "guide_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik",
+            "format_type": "챌린지",
+            "expected_duration_sec": 12,
+            "shooting_difficulty": "중",
+            "requires_face": True,
         },
     ],
 }
@@ -76,6 +88,12 @@ def test_sync_loads_trend_cluster(db_session: Session, monkeypatch: pytest.Monke
     assert first.source_platform == "YOUTUBE"
     assert first.trend_challenge_id == "jujutsu_transition"
     assert first.is_active is True
+    assert (
+        first.format_type,
+        first.expected_duration_sec,
+        first.shooting_difficulty,
+        first.requires_face,
+    ) == ("밈", 10, "중", False)
 
 
 def test_sync_is_idempotent_and_updates(
@@ -157,9 +175,43 @@ def test_sync_adopts_existing_row_with_same_url(
     db_session.refresh(existing)
     assert existing.trend_challenge_id == "cafe_recommendation_reels"
     assert existing.format_title == "카페 추천 리뷰 릴스"
-    # 트렌드 클러스터에 없는 메타데이터는 지우지 않는다.
+    # AI 분석 메타데이터가 기존 행에도 반영된다.
+    assert existing.expected_duration_sec == 13
+    assert existing.shooting_difficulty == "중"
+
+
+def test_sync_does_not_erase_curated_metadata_when_ai_omits_it(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    existing = VideoFormat(
+        format_title="기존 포맷",
+        reference_url="https://youtu.be/existing",
+        trend_challenge_id="existing",
+        format_type="직접 입력",
+        expected_duration_sec=25,
+        shooting_difficulty="하",
+        requires_face=False,
+    )
+    db_session.add(existing)
+    db_session.commit()
+    payload = {
+        "results": [
+            {
+                "id": "existing",
+                "rank": 1,
+                "name": "기존 포맷 갱신",
+                "representative_youtube_url": "https://youtu.be/existing",
+            }
+        ]
+    }
+    _stub_ai(monkeypatch, payload)
+
+    sync_trend_formats(db_session)
+    db_session.refresh(existing)
+    assert existing.format_type == "직접 입력"
     assert existing.expected_duration_sec == 25
     assert existing.shooting_difficulty == "하"
+    assert existing.requires_face is False
 
 
 def test_trending_sort_uses_trend_rank(db_session: Session) -> None:

@@ -206,6 +206,10 @@ class TrendChallenge:
     rank: int | None = None
     representative_youtube_url: str | None = None
     guide_youtube_url: str | None = None
+    format_type: str | None = None
+    expected_duration_sec: int | None = None
+    shooting_difficulty: str | None = None
+    requires_face: bool | None = None
 
 
 def list_trend_challenges() -> list[TrendChallenge]:
@@ -237,6 +241,14 @@ def list_trend_challenges() -> list[TrendChallenge]:
                 rank=int(rank) if rank is not None else None,
                 representative_youtube_url=item.get("representative_youtube_url"),
                 guide_youtube_url=item.get("guide_youtube_url"),
+                format_type=item.get("format_type"),
+                expected_duration_sec=(
+                    int(item["expected_duration_sec"])
+                    if item.get("expected_duration_sec") is not None
+                    else None
+                ),
+                shooting_difficulty=item.get("shooting_difficulty"),
+                requires_face=item.get("requires_face"),
             )
         )
     return challenges
