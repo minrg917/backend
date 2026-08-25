@@ -32,5 +32,11 @@ jobs:
             sudo install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
             sudo systemctl daemon-reload
-            sudo systemctl enable --now sarils-trend-sync.timer
+            # sarils-api를 먼저 재시작해 마이그레이션(alembic upgrade head, api의
+            # ExecStartPre)이 끝나게 한 뒤 트렌드 동기화 타이머를 켠다. 순서가
+            # 반대면 enable --now가 즉시 한 번 실행을 트리거하는데, 그 시점엔 아직
+            # 새 컬럼이 없어 "Unknown column" 에러로 실패한다(2026-08-25 PR #70
+            # 첫 배포에서 발견 — 그날은 뒤이어 수동으로 재동기화해 데이터 유실은
+            # 없었다).
             sudo systemctl restart sarils-api
+            sudo systemctl enable --now sarils-trend-sync.timer
