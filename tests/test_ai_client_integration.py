@@ -1,0 +1,210 @@
+"""메인 백엔드와 AI 서버 사이의 내부 HTTP 계약 테스트."""
+
+from typing import Any
+
+import httpx
+import pytest
+
+from app.core.config import settings
+from app.models.shorts_project import PromotionPurpose, ShortsProject
+from app.models.store import Store
+from app.models.store_menu import StoreMenu
+from app.models.video_format import VideoFormat
+from app.services import ai_client
+
+
+def test_internal_request_sends_shared_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        captured.update(method=method, url=url, **kwargs)
+        return httpx.Response(200, json={"ok": True}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal/")
+    monkeypatch.setattr(settings, "AI_SERVER_API_KEY", "shared-secret")
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    assert ai_client._request_json("GET", "/api/v1/agents") == {"ok": True}
+    assert captured["url"] == "http://ai.internal/api/v1/agents"
+    assert captured["headers"] == {"X-Internal-API-Key": "shared-secret"}
+
+
+def test_internal_auth_failure_becomes_configuration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        del kwargs
+        return httpx.Response(401, json={"detail": "no"}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    with pytest.raises(ai_client.AIServiceConfigurationError):
+        ai_client._request_json("GET", "/api/v1/agents")
+
+
+def test_shortform_session_maps_store_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        captured.update(method=method, path=path, **kwargs)
+        return {
+            "session_id": "sf_123",
+            "assistant_message": "오늘 어떤 영상을 찍을까요?",
+            "options": [{"id": "FREE_INPUT", "label": "직접 입력하기"}],
+            "project_state": {"ready_for_confirmation": False},
+        }
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(ai_client, "_request_json", fake_request)
+    store = Store(id=10, user_id=1, name="행복분식", category="분식", address="서울")
+    menu = StoreMenu(id=20, store_id=10, name="떡볶이", price=4000)
+
+    result = ai_client.start_shortform_session(store, [menu], "직장인 상권")
+
+    assert result.session_token == "sf_123"
+    body = captured["json_body"]["store_context"]
+    assert body["store"]["store_id"] == "10"
+    assert body["representative_menus"][0]["menu_id"] == "20"
+    assert body["trade_area"] == {"summary": "직장인 상권"}
+
+
+def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "estimated_shooting_sec": 480,
+            "difficulty": "하",
+            "scenes": [{"scene_order": 1, "scene_description": "완성 메뉴"}],
+            "tasks": [
+                {
+                    "display_order": 1,
+                    "task_title": "완성 메뉴 촬영",
+                    "shooting_scene_order": 1,
+                }
+            ],
+        },
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_014",
+        editing_template_version=1,
+        format_title="메뉴 소개",
+        reference_url="internal://template",
+    )
+
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        Store(id=10, user_id=1, name="행복분식"),
+        ShortsProject(id=30, store_id=10),
+    )
+
+    assert guide.scenes[0].scene_description == "완성 메뉴"
+    assert guide.tasks[0].scene_index == 0
+
+
+def test_shooting_guide_builds_tasks_when_template_only_has_scenes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "scenes": [{"scene_order": 1, "scene_description": "메뉴 클로즈업"}],
+            "tasks": [],
+        },
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_014",
+        editing_template_version=1,
+        format_title="메뉴 소개",
+        reference_url="internal://template",
+    )
+
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        Store(id=10, user_id=1, name="행복분식"),
+        ShortsProject(id=30, store_id=10),
+    )
+
+    assert guide.tasks[0].task_title == "메뉴 클로즈업 촬영"
+    assert guide.tasks[0].scene_index == 0
+
+
+def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        captured.update(method=method, path=path, **kwargs)
+        return {"run_id": "edit_123", "status": "QUEUED", "task_id": "task_123"}
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(ai_client, "_request_json", fake_request)
+    project = ShortsProject(
+        id=30,
+        store_id=10,
+        menu_id=20,
+        recommendation_id="rec_123",
+        promotion_purpose=PromotionPurpose.MENU,
+        face_exposure_mode="노출있음",
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_014",
+        editing_template_version=3,
+        format_title="메뉴 소개",
+        reference_url="internal://template",
+    )
+
+    run = ai_client.start_editing_run(
+        Store(id=10, user_id=1, name="행복분식"),
+        project,
+        video_format,
+        [ai_client.FootageInput("task_1", "https://signed.example/take.mp4", 1)],
+    )
+
+    assert run.run_id == "edit_123"
+    body = captured["json_body"]
+    assert body["selected_shortform"]["editing_template_version"] == 3
+    # 한국어 얼굴노출모드가 AI 쪽 영문 토큰으로 변환되어야 한다(원문 그대로 보내면 안 됨).
+    assert body["project"]["face_exposure"] == "allowed"
+    assert body["videos"][0]["shooting_scene_order"] == 1
+
+
+def test_face_exposure_unknown_value_falls_back_to_not_allowed() -> None:
+    """모르는 값(구버전 4모드 잔재 등)은 동의 안 된 얼굴 노출보다 안전한 쪽으로 떨어진다."""
+    assert ai_client._map_face_exposure(None) == "not_allowed"
+    assert ai_client._map_face_exposure("일부노출") == "not_allowed"
+    assert ai_client._map_face_exposure("노출없음") == "not_allowed"
+    assert ai_client._map_face_exposure("노출있음") == "allowed"
+
+
+def test_editing_result_maps_nested_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "run_id": "edit_123",
+            "status": "COMPLETED",
+            "recipe": {"recipe_version": 1},
+            "render": {
+                "output_video_url": "http://renderer.internal/files/result.mp4",
+                "resolution": "1080x1920",
+                "cover_image_url": None,
+            },
+            "publishing": {
+                "caption": "오늘의 메뉴",
+                "hashtags": ["#행복분식"],
+                "post_note": "플랫폼에서 음원을 추가하세요.",
+            },
+        },
+    )
+
+    result = ai_client.get_editing_run_result("edit_123")
+
+    assert result.video_url == "http://renderer.internal/files/result.mp4"
+    assert result.resolution == "1080x1920"
+    assert result.publishing is not None
+    assert result.publishing.hashtags == ["#행복분식"]

@@ -17,15 +17,122 @@ AI는 **콘티(`scenes`)와 촬영 태스크(`tasks`)를 함께** 내려준다(2
 `is_placeholder=True`로 표시된다. 화면에서 "AI 준비 중"을 안내하는 데 쓸 수 있다.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from app.core.config import settings
+from app.core.exceptions import AppError, UnprocessableEntityError
 from app.models.shorts_project import ShortsProject
 from app.models.store import Store
 from app.models.store_menu import StoreMenu
 from app.models.video_format import VideoFormat
+
+logger = logging.getLogger(__name__)
+
+
+class AIServiceUnavailable(AppError):
+    status_code = 503
+    error_code = "AI_SERVICE_UNAVAILABLE"
+    message = "AI 서버에 일시적으로 연결할 수 없습니다. 잠시 후 다시 시도해주세요."
+
+
+class AIServiceConfigurationError(AppError):
+    status_code = 503
+    error_code = "AI_SERVICE_CONFIGURATION_ERROR"
+    message = "AI 서버 연동 설정을 확인해주세요."
+
+
+class AITemplateNotLinked(UnprocessableEntityError):
+    error_code = "AI_TEMPLATE_NOT_LINKED"
+    message = "선택한 영상 포맷이 AI 편집 템플릿과 연결되어 있지 않습니다."
+
+
+def _request_json(
+    method: str,
+    path: str,
+    *,
+    json_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """AI 내부 API를 호출하고 안전한 도메인 오류로 변환한다.
+
+    인증 키와 AI 응답 본문은 로그에 남기지 않는다. AI 서버의 상세 오류는 내부 구현과
+    외부 API 제공자 정보를 포함할 수 있어 메인 API 응답으로 그대로 전달하지 않는다.
+    """
+    url = f"{settings.AI_SERVER_URL.rstrip('/')}{path}"
+    headers = {"X-Internal-API-Key": settings.AI_SERVER_API_KEY}
+    try:
+        response = httpx.request(
+            method,
+            url,
+            headers=headers,
+            json=json_body,
+            timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
+        )
+    except httpx.RequestError as exc:
+        logger.warning("AI 서버 연결 실패: %s %s (%s)", method, path, type(exc).__name__)
+        raise AIServiceUnavailable from exc
+
+    if response.status_code == 401:
+        logger.error("AI 서버 내부 인증 실패: %s %s", method, path)
+        raise AIServiceConfigurationError
+    if response.status_code in {422, 429, 503}:
+        logger.warning(
+            "AI 서버가 요청을 처리할 준비가 되지 않음: %s %s -> %s",
+            method,
+            path,
+            response.status_code,
+        )
+        raise AIServiceUnavailable
+    if response.is_error:
+        logger.warning("AI 서버 호출 실패: %s %s -> %s", method, path, response.status_code)
+        raise AIServiceUnavailable
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.warning("AI 서버가 JSON이 아닌 응답을 반환함: %s %s", method, path)
+        raise AIServiceUnavailable from exc
+    if not isinstance(payload, dict):
+        raise AIServiceUnavailable
+    return payload
+
+
+_FACE_EXPOSURE_TOKENS = {
+    "노출있음": "allowed",
+    "노출없음": "not_allowed",
+}
+
+
+def _map_face_exposure(value: str | None) -> str:
+    """한국어 얼굴노출모드를 AI 쪽 영문 토큰으로 바꾼다.
+
+    우리 쪽은 노출있음/노출없음 2가지만 구분하기로 확정됐다(2026-08-25). AI 문서가
+    실제로 확인해준 값은 "not_allowed" 하나뿐이라 "allowed"는 이름 대칭으로 추정한
+    값이다 — AI팀 확인 전까지는 잠정치. 모르는 값(구버전 4모드 잔재 등)이 오면 동의
+    안 된 얼굴을 노출시키는 쪽보다 안전하게 "not_allowed"로 떨어뜨린다.
+    """
+    return _FACE_EXPOSURE_TOKENS.get(value or "", "not_allowed")
+
+
+def _option(item: dict[str, Any]) -> "SessionOption":
+    return SessionOption(id=str(item["id"]), label=str(item["label"]))
+
+
+def _recommendation(item: dict[str, Any] | None) -> "Recommendation | None":
+    if item is None:
+        return None
+    return Recommendation(
+        recommendation_id=str(item["recommendation_id"]),
+        project_title=str(item["project_title"]),
+        title=str(item["title"]),
+        concept=str(item["concept"]),
+        editing_template_id=str(item["editing_template_id"]),
+        editing_template_version=int(item["editing_template_version"]),
+    )
 
 
 @dataclass(frozen=True)
@@ -105,7 +212,7 @@ def get_shooting_guide(
     if not is_enabled():
         return _placeholder_shooting_guide(video_format)
 
-    del store, project  # 실제 연동 시 요청 컨텍스트로 쓴다 — 정확한 용도는 미확정
+    del store, project  # 현재 AI 조회 계약은 템플릿 id와 버전만 받는다.
     if video_format.editing_template_id is None or video_format.editing_template_version is None:
         # 5.1과 R06은 같은 템플릿 카탈로그를 쓰기로 확인됐다(2026-08-26). 그런데도
         # 이 값이 없다면 5.1이 옛(레거시) 방식으로 적재된 행이라는 뜻이다.
@@ -113,8 +220,58 @@ def get_shooting_guide(
             "이 포맷은 영상편집템플릿과 연결되어 있지 않습니다(editing_template_id 없음)."
         )
 
-    # AI 스펙 확정 후: GET /api/v1/editing-templates/{id}/versions/{version}/shooting-guide
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    data = _request_json(
+        "GET",
+        (
+            f"/api/v1/editing-templates/{video_format.editing_template_id}"
+            f"/versions/{video_format.editing_template_version}/shooting-guide"
+        ),
+    )
+    scenes = [
+        PlannedScene(
+            scene_order=int(item.get("scene_order") or index),
+            scene_description=str(item.get("scene_description") or "촬영 장면"),
+            scene_dialogue=item.get("scene_dialogue"),
+            scene_subtitle=item.get("scene_subtitle"),
+            shot_type=item.get("shot_type"),
+            target_duration_sec=item.get("target_duration_sec"),
+        )
+        for index, item in enumerate(data.get("scenes") or [], start=1)
+    ]
+    tasks: list[PlannedTask] = []
+    for index, item in enumerate(data.get("tasks") or [], start=1):
+        scene_index = item.get("scene_index")
+        if scene_index is None and item.get("shooting_scene_order") is not None:
+            scene_index = int(item["shooting_scene_order"]) - 1
+        tasks.append(
+            PlannedTask(
+                display_order=int(item.get("display_order") or index),
+                task_title=str(item.get("task_title") or item.get("title") or "촬영 태스크"),
+                task_type=item.get("task_type"),
+                scene_index=int(scene_index) if scene_index is not None else None,
+                guide=item.get("guide"),
+            )
+        )
+    if not tasks:
+        tasks = [
+            PlannedTask(
+                display_order=scene.scene_order,
+                task_title=f"{scene.scene_description} 촬영",
+                task_type="영상촬영",
+                scene_index=index,
+                guide={"guide_type": "OVERLAY", "instructions": []},
+            )
+            for index, scene in enumerate(scenes)
+        ]
+
+    return ShootingGuide(
+        estimated_shooting_sec=data.get("estimated_shooting_sec"),
+        required_people=data.get("required_people"),
+        props=list(data.get("props") or []),
+        difficulty=data.get("difficulty"),
+        scenes=scenes,
+        tasks=tasks,
+    )
 
 
 def _placeholder_shooting_guide(video_format: VideoFormat) -> ShootingGuide:
@@ -252,7 +409,10 @@ class EditingRunResult:
 
 
 def start_editing_run(
-    store: Store, project: ShortsProject, footages: list[FootageInput]
+    store: Store,
+    project: ShortsProject,
+    video_format: VideoFormat,
+    footages: list[FootageInput],
 ) -> EditingRun:
     """편집을 시작한다 (`docs/AI_연동_입출력.md` 16번, `POST /editing-runs`).
 
@@ -266,10 +426,49 @@ def start_editing_run(
     if not is_enabled():
         return _placeholder_editing_run()
 
-    # 실제 연동 시 요청 본문(project/selected_shortform/videos)을 구성하는 데 쓴다
-    del store, project, footages
-    # AI 스펙 확정 후: POST /api/v1/editing-runs
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    if video_format.editing_template_id is None or video_format.editing_template_version is None:
+        raise AITemplateNotLinked
+
+    purpose_map = {
+        "메뉴소개": "sales",
+        "이벤트알리기": "awareness",
+        "가게소개": "awareness",
+        "고객늘리기": "new_customer",
+    }
+    subject = dict(project.promotion_detail or {})
+    if project.menu_id is not None:
+        subject = {"type": "MENU", "menu_id": project.menu_id, **subject}
+    elif not subject:
+        subject = {"type": "STORE", "name": store.name}
+
+    data = _request_json(
+        "POST",
+        "/api/v1/editing-runs",
+        json_body={
+            "project": {
+                "project_id": str(project.id),
+                "store_id": str(store.id),
+                "promotion_subject": subject,
+                "promotion_objective": purpose_map.get(str(project.promotion_purpose), "awareness"),
+                "face_exposure": _map_face_exposure(project.face_exposure_mode),
+            },
+            "selected_shortform": {
+                "recommendation_id": project.recommendation_id or f"project_{project.id}",
+                "editing_template_id": video_format.editing_template_id,
+                "editing_template_version": video_format.editing_template_version,
+            },
+            "videos": [
+                {
+                    "video_id": footage.video_id,
+                    "footage_url": footage.footage_url,
+                    "shooting_scene_order": footage.shooting_scene_order,
+                }
+                for footage in footages
+            ],
+            "revision": None,
+        },
+    )
+    return EditingRun(run_id=str(data["run_id"]), status=str(data["status"]))
 
 
 def _placeholder_editing_run() -> EditingRun:
@@ -288,8 +487,8 @@ def get_editing_run(run_id: str) -> EditingRun:
         status = "RUNNING" if run_id.startswith("edit_revision_placeholder_") else "QUEUED"
         return EditingRun(run_id=run_id, status=status)
 
-    # AI 스펙 확정 후: GET /api/v1/editing-runs/{run_id}
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    data = _request_json("GET", f"/api/v1/editing-runs/{run_id}")
+    return EditingRun(run_id=str(data.get("run_id") or data["id"]), status=str(data["status"]))
 
 
 def get_editing_run_result(run_id: str) -> EditingRunResult:
@@ -301,12 +500,33 @@ def get_editing_run_result(run_id: str) -> EditingRunResult:
     if not is_enabled():
         raise NotImplementedError("AI 연동 전에는 편집이 완료되지 않아 결과를 조회할 수 없습니다.")
 
-    del run_id
-    # AI 스펙 확정 후: GET /api/v1/editing-runs/{run_id}/result
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    data = _request_json("GET", f"/api/v1/editing-runs/{run_id}/result")
+    render = data.get("render") or {}
+    publishing_data = data.get("publishing")
+    publishing = None
+    if publishing_data is not None:
+        publishing = PublishKit(
+            caption=str(publishing_data["caption"]),
+            hashtags=list(publishing_data.get("hashtags") or []),
+            post_note=publishing_data.get("post_note"),
+            track=publishing_data.get("track"),
+        )
+    return EditingRunResult(
+        recipe=data.get("recipe"),
+        video_url=render.get("output_video_url"),
+        resolution=render.get("resolution"),
+        cover_image_url=render.get("cover_image_url"),
+        publishing=publishing,
+        missing_scene_roles=list(data.get("missing_scene_roles") or []),
+        available_options=list(data.get("available_options") or []),
+    )
 
 
-def request_revision(run_id: str, revision_action: str) -> EditingRun:
+def request_revision(
+    run_id: str,
+    revision_action: str,
+    footages: list[FootageInput] | None = None,
+) -> EditingRun:
     """수정을 요청한다 (20번, `POST /editing-runs/{run_id}/revisions`).
 
     **새 run을 만든다** — 기존 EditRecipe는 immutable하게 유지된다. placeholder는
@@ -314,11 +534,25 @@ def request_revision(run_id: str, revision_action: str) -> EditingRun:
     사장님이 재요청 중임을 알 수 있다). 완료되진 않는다(위와 같은 이유).
     """
     if not is_enabled():
-        del run_id, revision_action
+        del run_id, revision_action, footages
         return EditingRun(run_id=f"edit_revision_placeholder_{uuid.uuid4().hex}", status="RUNNING")
 
-    # AI 스펙 확정 후: POST /api/v1/editing-runs/{run_id}/revisions
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    data = _request_json(
+        "POST",
+        f"/api/v1/editing-runs/{run_id}/revisions",
+        json_body={
+            "revision_action": revision_action,
+            "videos": [
+                {
+                    "video_id": footage.video_id,
+                    "footage_url": footage.footage_url,
+                    "shooting_scene_order": footage.shooting_scene_order,
+                }
+                for footage in footages or []
+            ],
+        },
+    )
+    return EditingRun(run_id=str(data["run_id"]), status=str(data["status"]))
 
 
 def generate_publish_kit(store: Store, project: ShortsProject) -> PublishKit:
@@ -441,8 +675,39 @@ def start_shortform_session(
     if not is_enabled():
         return _placeholder_greeting(store)
 
-    # AI 스펙 확정 후: POST /api/v1/shortform-sessions에 store_context를 실어 보낸다.
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    data = _request_json(
+        "POST",
+        "/api/v1/shortform-sessions",
+        json_body={
+            "store_context": {
+                "store": {
+                    "store_id": str(store.id),
+                    "store_name": store.name,
+                    "category": store.category,
+                    "location": {"address": store.address},
+                    "atmosphere": [store.brand_tone] if store.brand_tone else [],
+                    "representative_color": store.brand_color,
+                    "store_photos": [],
+                },
+                "representative_menus": [
+                    {
+                        "menu_id": str(menu.id),
+                        "name": menu.name,
+                        "price": menu.price,
+                        "currency": "KRW",
+                    }
+                    for menu in menus
+                ],
+                "trade_area": ({"summary": trade_area_insight} if trade_area_insight else None),
+            }
+        },
+    )
+    return SessionGreeting(
+        session_token=str(data["session_id"]),
+        assistant_message=str(data["assistant_message"]),
+        options=[_option(item) for item in data.get("options") or []],
+        project_state=dict(data.get("project_state") or {}),
+    )
 
 
 def _placeholder_greeting(store: Store) -> SessionGreeting:
@@ -485,9 +750,19 @@ def submit_shortform_turn(
     if not is_enabled():
         return _placeholder_turn(store, project_state, representative_menu)
 
-    del session_token, turn_input  # 실제 연동 시 AI 요청 본문을 구성하는 데 쓴다
-    # AI 스펙 확정 후: POST /api/v1/shortform-sessions/{session_id}/turns
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    del store, representative_menu
+    data = _request_json(
+        "POST",
+        f"/api/v1/shortform-sessions/{session_token}/turns",
+        json_body={"input": turn_input},
+    )
+    return TurnResult(
+        action=str(data["action"]),
+        assistant_message=data.get("assistant_message"),
+        project_state=dict(data.get("project_state") or project_state),
+        options=[_option(item) for item in data.get("options") or []],
+        recommendation=_recommendation(data.get("recommendation")),
+    )
 
 
 def _placeholder_turn(
@@ -527,9 +802,15 @@ def get_next_shortform_recommendation(
     if not is_enabled():
         return _placeholder_recommendation(store, representative_menu)
 
-    del session_token
-    # AI 스펙 확정 후: POST /api/v1/shortform-sessions/{session_id}/recommendations/next
-    raise NotImplementedError("AI 서버 연동은 스펙 확정 후 구현합니다.")
+    del store, representative_menu
+    data = _request_json(
+        "POST",
+        f"/api/v1/shortform-sessions/{session_token}/recommendations/next",
+    )
+    recommendation = _recommendation(data.get("recommendation"))
+    if recommendation is None:
+        raise AIServiceUnavailable
+    return recommendation
 
 
 def _placeholder_recommendation(

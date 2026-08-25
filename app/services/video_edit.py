@@ -8,7 +8,10 @@
 """
 
 import json
+import tempfile
+import uuid
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,9 +21,11 @@ from app.models.shorts_project import ShortsProject
 from app.models.store import Store
 from app.models.storyboard_scene import StoryboardScene
 from app.models.user import User
+from app.models.video_format import VideoFormat
 from app.models.video_output import RenderStatus, VideoOutput
 from app.schemas.shorts_project import TimelineItem
 from app.services import ai_client
+from app.storage import StorageError, get_storage, to_public_url
 
 # 렌더링 진행률. ⚠️ 실제 진행률이 아니라 상태에서 매핑한 근사값이다.
 # 렌더러가 붙으면 실제 값을 받아 이 표를 대체한다.
@@ -71,11 +76,12 @@ def _build_footage_inputs(db: Session, project: ShortsProject) -> list[ai_client
         )
         .order_by(ShootingTask.display_order, ShootingTask.id)
     ).all()
+    storage = get_storage()
     return [
         ai_client.FootageInput(
             video_id=f"task_{task.id}",
-            footage_url=task.footage_url,
-            shooting_scene_order=scene_order,
+            footage_url=to_public_url(storage, task.footage_url) or "",
+            shooting_scene_order=scene_order or task.display_order,
         )
         for task, scene_order in rows
     ]
@@ -94,8 +100,15 @@ def start_edit(db: Session, project: ShortsProject, target_platform: str) -> Vid
     _require_all_footage(db, project)
     store = db.get(Store, project.store_id)
     assert store is not None  # 프로젝트가 있으면 가게도 있다(FK)
+    video_format = db.get(VideoFormat, project.video_format_id)
+    assert video_format is not None
 
-    run = ai_client.start_editing_run(store, project, _build_footage_inputs(db, project))
+    run = ai_client.start_editing_run(
+        store,
+        project,
+        video_format,
+        _build_footage_inputs(db, project),
+    )
     output = VideoOutput(
         shorts_project_id=project.id,
         ai_run_id=run.run_id,
@@ -157,7 +170,7 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     if new_status is RenderStatus.COMPLETED:
         result = ai_client.get_editing_run_result(output.ai_run_id)
         output.edit_recipe = json.dumps(result.recipe or {}, ensure_ascii=False)
-        output.video_url = result.video_url
+        output.video_url = _persist_rendered_video(output.shorts_project_id, result.video_url)
         output.cover_image_url = result.cover_image_url
         output.resolution = result.resolution
         # 배경음악을 직접 입히지 않기로 확정돼 항상 false다(2026-08-24 결정,
@@ -180,6 +193,30 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     db.commit()
     db.refresh(output)
     return output
+
+
+def _persist_rendered_video(project_id: int, source_url: str | None) -> str | None:
+    """AI 렌더러의 사설 URL을 메인 저장소로 스트리밍 복사하고 DB용 키를 반환한다."""
+    if not source_url:
+        return None
+
+    key = f"projects/{project_id}/outputs/{uuid.uuid4().hex}.mp4"
+    try:
+        with httpx.stream(
+            "GET",
+            source_url,
+            timeout=httpx.Timeout(180.0, connect=5.0),
+        ) as response:
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "video/mp4").split(";", 1)[0]
+            with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024) as stream:
+                for chunk in response.iter_bytes():
+                    stream.write(chunk)
+                stream.seek(0)
+                get_storage().save(key, stream, content_type)
+    except (httpx.HTTPError, StorageError) as exc:
+        raise ai_client.AIServiceUnavailable from exc
+    return key
 
 
 def latest_output(db: Session, project: ShortsProject) -> VideoOutput:
@@ -250,7 +287,13 @@ def revise(db: Session, output: VideoOutput, request_type: str, action: str) -> 
     """
     del request_type  # AI 연동 시 프롬프트 구성에 사용한다
 
-    run = ai_client.request_revision(output.ai_run_id or "", action)
+    project = db.get(ShortsProject, output.shorts_project_id)
+    assert project is not None
+    run = ai_client.request_revision(
+        output.ai_run_id or "",
+        action,
+        _build_footage_inputs(db, project),
+    )
     revised = VideoOutput(
         shorts_project_id=output.shorts_project_id,
         ai_run_id=run.run_id,
