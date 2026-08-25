@@ -33,7 +33,7 @@ class VideoFormatSummary(BaseSchema):
     format_type: str | None
     expected_duration_sec: int | None
     shooting_difficulty: str | None
-    face_exposure_level: str | None
+    requires_face: bool | None
     reference_url: str
     # 촬영 준비 화면에서 트는 가이드 영상. 홈 피드가 쓰는 대표 영상(`reference_url`)과
     # 다를 수 있다. 트렌드 클러스터에서 온 포맷에만 값이 있다.
@@ -58,7 +58,7 @@ class VideoFormatDetailResponse(BaseSchema):
     source_platform: str | None
     expected_duration_sec: int | None
     shooting_difficulty: str | None
-    face_exposure_level: str | None
+    requires_face: bool | None
     is_favorite: bool = False
 
 

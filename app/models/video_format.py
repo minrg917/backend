@@ -40,8 +40,8 @@ class VideoFormat(Base, TimestampMixin):
     shooting_difficulty: Mapped[str | None] = mapped_column(
         String(20), nullable=True, comment="촬영 난이도"
     )
-    face_exposure_level: Mapped[str | None] = mapped_column(
-        String(20), nullable=True, index=True, comment="얼굴 노출 요구 수준"
+    requires_face: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, index=True, comment="얼굴 노출 필수 여부"
     )
     # 숏폼 Agent(R06)가 추천하는 "영상편집템플릿"과 연결하는 키. ERD 원문에는
     # 없던 컬럼 — 2026-08-26 R06 재설계로 신설(docs/AI_연동_입출력.md 9번).
