@@ -21,7 +21,7 @@ class FormatNotFound(NotFoundError):
 def list_formats(
     db: Session,
     format_type: str | None = None,
-    face_exposure_level: str | None = None,
+    requires_face: bool | None = None,
     keyword: str | None = None,
     sort: FormatSort = FormatSort.TRENDING,
     page: int = 1,
@@ -40,8 +40,8 @@ def list_formats(
     statement = select(VideoFormat).where(VideoFormat.is_active.is_(True))
     if format_type:
         statement = statement.where(VideoFormat.format_type == format_type)
-    if face_exposure_level:
-        statement = statement.where(VideoFormat.face_exposure_level == face_exposure_level)
+    if requires_face is not None:
+        statement = statement.where(VideoFormat.requires_face.is_(requires_face))
     if keyword:
         statement = statement.where(VideoFormat.format_title.contains(keyword))
 

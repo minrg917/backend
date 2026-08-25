@@ -26,7 +26,7 @@ def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChal
         "format_type",
         "expected_duration_sec",
         "shooting_difficulty",
-        "face_exposure_level",
+        "requires_face",
     ):
         value = getattr(challenge, field)
         if value is not None:

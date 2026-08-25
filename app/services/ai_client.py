@@ -209,7 +209,7 @@ class TrendChallenge:
     format_type: str | None = None
     expected_duration_sec: int | None = None
     shooting_difficulty: str | None = None
-    face_exposure_level: str | None = None
+    requires_face: bool | None = None
 
 
 def list_trend_challenges() -> list[TrendChallenge]:
@@ -248,7 +248,7 @@ def list_trend_challenges() -> list[TrendChallenge]:
                     else None
                 ),
                 shooting_difficulty=item.get("shooting_difficulty"),
-                face_exposure_level=item.get("face_exposure_level"),
+                requires_face=item.get("requires_face"),
             )
         )
     return challenges

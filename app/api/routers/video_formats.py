@@ -25,7 +25,7 @@ def list_formats(
         int | None, Query(description="프로젝트 기준 개인화 추천. 없으면 일반 피드")
     ] = None,
     format_type: Annotated[str | None, Query(description="유형(밈/잔잔한 소개)")] = None,
-    face_exposure_level: Annotated[str | None, Query(description="얼굴 노출 수준")] = None,
+    requires_face: Annotated[bool | None, Query(description="얼굴 노출 필수 여부")] = None,
     keyword: Annotated[str | None, Query(description="포맷명 검색")] = None,
     sort: Annotated[FormatSort, Query(description="정렬 기준")] = FormatSort.TRENDING,
     period: Annotated[str | None, Query(description="기간(24h/3d/7d/30d)")] = None,
@@ -41,7 +41,7 @@ def list_formats(
     formats = format_service.list_formats(
         db,
         format_type=format_type,
-        face_exposure_level=face_exposure_level,
+        requires_face=requires_face,
         keyword=keyword,
         sort=sort,
         page=page,

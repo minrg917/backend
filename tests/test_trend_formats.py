@@ -26,7 +26,7 @@ TRENDCLUSTER: dict[str, Any] = {
             "format_type": "밈",
             "expected_duration_sec": 10,
             "shooting_difficulty": "중",
-            "face_exposure_level": "낮음",
+            "requires_face": False,
         },
         {
             "id": "cafe_recommendation_reels",
@@ -37,7 +37,7 @@ TRENDCLUSTER: dict[str, Any] = {
             "format_type": "정보형",
             "expected_duration_sec": 13,
             "shooting_difficulty": "중",
-            "face_exposure_level": "낮음",
+            "requires_face": False,
         },
         {
             "id": "otsukare_summer_challenge",
@@ -48,7 +48,7 @@ TRENDCLUSTER: dict[str, Any] = {
             "format_type": "챌린지",
             "expected_duration_sec": 12,
             "shooting_difficulty": "중",
-            "face_exposure_level": "높음",
+            "requires_face": True,
         },
     ],
 }
@@ -92,8 +92,8 @@ def test_sync_loads_trend_cluster(db_session: Session, monkeypatch: pytest.Monke
         first.format_type,
         first.expected_duration_sec,
         first.shooting_difficulty,
-        first.face_exposure_level,
-    ) == ("밈", 10, "중", "낮음")
+        first.requires_face,
+    ) == ("밈", 10, "중", False)
 
 
 def test_sync_is_idempotent_and_updates(
@@ -190,7 +190,7 @@ def test_sync_does_not_erase_curated_metadata_when_ai_omits_it(
         format_type="직접 입력",
         expected_duration_sec=25,
         shooting_difficulty="하",
-        face_exposure_level="낮음",
+        requires_face=False,
     )
     db_session.add(existing)
     db_session.commit()
@@ -211,7 +211,7 @@ def test_sync_does_not_erase_curated_metadata_when_ai_omits_it(
     assert existing.format_type == "직접 입력"
     assert existing.expected_duration_sec == 25
     assert existing.shooting_difficulty == "하"
-    assert existing.face_exposure_level == "낮음"
+    assert existing.requires_face is False
 
 
 def test_trending_sort_uses_trend_rank(db_session: Session) -> None:
