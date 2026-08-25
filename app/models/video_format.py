@@ -66,6 +66,24 @@ class VideoFormat(Base, TimestampMixin):
         comment="ACTIVE 여부 - false면 추천·피드 노출 대상 아님",
     )
 
+    # ── AI 트렌드 클러스터 연동 (AI 레포 `GET /api/v1/challenges`) ──────────
+    # AI가 발굴한 유행 챌린지를 그대로 피드 포맷으로 쓴다. `reference_url`에는
+    # **대표 영상 URL**이, 아래 `guide_video_url`에는 **가이드 영상 URL**이 들어간다
+    # (2026-08-26 AI팀 확인: "홈에서 보여주는 건 대표 영상, 그 외는 가이드 영상").
+    # 둘은 같을 수도 있다 — 지금 트렌드 클러스터 3건이 모두 그렇다.
+    guide_video_url: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="가이드 영상 URL(촬영 준비 화면에서 사용)"
+    )
+    # 챌린지 id. 같은 챌린지가 다시 내려와도 행이 늘지 않게 하는 기준이며,
+    # 대표 영상이 교체돼도 같은 행을 갱신할 수 있다(`reference_url` 기준이면 새 행이 생긴다).
+    trend_challenge_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, unique=True, comment="AI 트렌드 클러스터 챌린지 ID"
+    )
+    # 트렌드 순위(1이 가장 높음). `sort=trending`이 이 값으로 정렬한다.
+    trend_rank: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True, comment="AI 트렌드 클러스터 순위"
+    )
+
     __table_args__ = (
         UniqueConstraint(
             "editing_template_id", "editing_template_version", name="uq_video_formats_template"
