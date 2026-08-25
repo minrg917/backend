@@ -79,6 +79,14 @@ def _reference_video(db: Session, task: ShootingTask) -> ReferenceVideo | None:
     """안무 영상은 포맷 하나당 하나다 — 프로젝트가 고른 포맷에서 가져온다.
 
     태스크별 컬럼을 두지 않기로 한 결정(`docs/PM_DECISIONS.md` 2026-08-21 R10).
+
+    **가이드 영상을 준다.** 촬영 중에 사장님이 따라 추는 영상이라서다 — 대표 영상은
+    "이 유행이 어떤 건지" 보여주는 것이라 여기 오면 따라 출 안무 대신 유행 소개
+    영상이 재생된다. 명세 9.1이 "`video_formats.reference_url`을 그대로 재사용"이라고
+    적힌 것은 포맷에 영상 주소가 하나뿐이던 시절 문구다.
+
+    가이드 영상이 없으면 대표 영상으로 떨어진다 — 트렌드 연동 전에 들어온 포맷과
+    R06 추천으로 적재된 포맷에는 아직 이 값이 없다.
     """
     project = db.get(ShortsProject, task.shorts_project_id)
     if project is None or project.video_format_id is None:
@@ -87,7 +95,7 @@ def _reference_video(db: Session, task: ShootingTask) -> ReferenceVideo | None:
     if video_format is None:
         return None
     return ReferenceVideo(
-        reference_url=video_format.reference_url,
+        reference_url=video_format.guide_video_url or video_format.reference_url,
         source_platform=video_format.source_platform,
     )
 

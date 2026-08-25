@@ -189,6 +189,59 @@ class ShootingGuide:
     is_placeholder: bool = False
 
 
+# ------------------------------------------------------- 트렌드 클러스터 (5.1 피드)
+#
+# AI 레포의 `challenges` 테이블이 원본이다. 유행 챌린지마다 **대표 영상**과
+# **가이드 영상** YouTube URL을 갖고 있고, 사람이 덮어쓴 값(`override_*`)이 있으면
+# 그쪽이 우선한다 — AI 서버가 `representative_youtube_url`/`guide_youtube_url`로
+# 이미 합쳐서 내려주므로 우리는 그대로 받는다.
+
+
+@dataclass(frozen=True)
+class TrendChallenge:
+    """트렌드 클러스터 항목 하나 (AI `GET /api/v1/challenges`)."""
+
+    id: str
+    name: str
+    rank: int | None = None
+    representative_youtube_url: str | None = None
+    guide_youtube_url: str | None = None
+
+
+def list_trend_challenges() -> list[TrendChallenge]:
+    """유행 챌린지 목록을 가져온다.
+
+    5.1 피드에 실제로 재생 가능한 영상을 채우는 유일한 경로다. R06 추천이 만드는
+    행(`internal://editing-template/...`)은 AI 서버 내부 자산이라 앱에서 썸네일도
+    재생도 되지 않는다 — 그건 편집 템플릿이고, 이건 사장님이 보고 따라 만들 원본이다.
+
+    **AI 서버가 없으면 빈 목록이다.** 여기서 가짜 URL을 만들면 재생되지 않는 영상이
+    피드에 그대로 노출된다(`start_editing_run`이 placeholder를 COMPLETED로 만들지
+    않는 것과 같은 이유 — 영상은 지어낼 수 없는 종류의 값이다).
+    """
+    if not is_enabled():
+        return []
+
+    data = _request_json("GET", "/api/v1/challenges")
+    challenges: list[TrendChallenge] = []
+    for item in data.get("results") or []:
+        challenge_id = item.get("id")
+        name = item.get("name")
+        if not challenge_id or not name:
+            continue
+        rank = item.get("rank")
+        challenges.append(
+            TrendChallenge(
+                id=str(challenge_id),
+                name=str(name),
+                rank=int(rank) if rank is not None else None,
+                representative_youtube_url=item.get("representative_youtube_url"),
+                guide_youtube_url=item.get("guide_youtube_url"),
+            )
+        )
+    return challenges
+
+
 def is_enabled() -> bool:
     """AI 서버가 설정돼 있는지."""
     return bool(settings.AI_SERVER_URL)

@@ -35,6 +35,9 @@ class VideoFormatSummary(BaseSchema):
     shooting_difficulty: str | None
     face_exposure_level: str | None
     reference_url: str
+    # 촬영 준비 화면에서 트는 가이드 영상. 홈 피드가 쓰는 대표 영상(`reference_url`)과
+    # 다를 수 있다. 트렌드 클러스터에서 온 포맷에만 값이 있다.
+    guide_video_url: str | None = None
     source_platform: str | None
     # 로그인 사용자가 이 포맷을 찜했는지. 피드에서 하트 채움 여부를 그리는 데 쓴다.
     is_favorite: bool = False
@@ -51,6 +54,7 @@ class VideoFormatDetailResponse(BaseSchema):
     format_title: str
     format_type: str | None
     reference_url: str
+    guide_video_url: str | None = None
     source_platform: str | None
     expected_duration_sec: int | None
     shooting_difficulty: str | None

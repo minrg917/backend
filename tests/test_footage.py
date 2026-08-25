@@ -151,11 +151,32 @@ def test_dance_guide_uses_format_reference_video(
     body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
 
     assert body["guide_type"] == "DANCE"
+    # 가이드 영상이 없는 포맷이라 대표 영상으로 떨어진다.
     assert body["reference_video"]["reference_url"] == video_format.reference_url
     assert body["reference_video"]["source_platform"] == "YOUTUBE"
     # 명세서상 DANCE는 나머지 블록이 null이다
     assert body["overlay"] is None
     assert body["broll_shot"] is None
+
+
+def test_dance_guide_prefers_guide_video(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    video_format: VideoFormat,
+    db_session: Session,
+) -> None:
+    """촬영 중에 따라 추는 영상이므로 대표 영상이 아니라 **가이드 영상**을 준다."""
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"guide_type": "DANCE"}
+    video_format.guide_video_url = "https://www.youtube.com/shorts/GUIDEvideo1"
+    db_session.commit()
+
+    body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
+
+    assert body["reference_video"]["reference_url"] == "https://www.youtube.com/shorts/GUIDEvideo1"
+    assert body["reference_video"]["reference_url"] != video_format.reference_url
 
 
 def test_guide_hidden_from_other_user(
