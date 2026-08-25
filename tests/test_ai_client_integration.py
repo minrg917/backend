@@ -70,11 +70,11 @@ def test_shortform_session_maps_store_context(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
-    monkeypatch.setattr(
-        ai_client,
-        "_request_json",
-        lambda *args, **kwargs: {
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        captured.update(method=method, path=path, **kwargs)
+        return {
             "estimated_shooting_sec": 480,
             "difficulty": "하",
             "scenes": [{"scene_order": 1, "scene_description": "완성 메뉴"}],
@@ -85,8 +85,10 @@ def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> 
                     "shooting_scene_order": 1,
                 }
             ],
-        },
-    )
+        }
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(ai_client, "_request_json", fake_request)
     video_format = VideoFormat(
         editing_template_id="edit_template_014",
         editing_template_version=1,
@@ -102,6 +104,9 @@ def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert guide.scenes[0].scene_description == "완성 메뉴"
     assert guide.tasks[0].scene_index == 0
+    assert captured["path"] == (
+        "/api/v1/video-editing-db/edit_template_014/versions/1/shooting-guide"
+    )
 
 
 def test_shooting_guide_builds_tasks_when_template_only_has_scenes(
@@ -166,10 +171,51 @@ def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.Monkey
 
     assert run.run_id == "edit_123"
     body = captured["json_body"]
-    assert body["selected_shortform"]["editing_template_version"] == 3
+    assert body["selected_shortform"] == {
+        "recommendation_id": "rec_123",
+        "video_editing_db_id": "edit_template_014",
+        "video_editing_db_version": 3,
+    }
     # 한국어 얼굴노출모드가 AI 쪽 영문 토큰으로 변환되어야 한다(원문 그대로 보내면 안 됨).
     assert body["project"]["face_exposure"] == "allowed"
     assert body["videos"][0]["shooting_scene_order"] == 1
+
+
+def test_shortform_recommendation_maps_ai_database_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "session_id": "sf_123",
+            "action": "RECOMMEND",
+            "assistant_message": None,
+            "project_state": {},
+            "options": [],
+            "recommendation": {
+                "recommendation_id": "rec_123",
+                "project_title": "떡볶이 숏폼",
+                "title": "메뉴 클로즈업",
+                "concept": "완성 메뉴를 먼저 보여줍니다.",
+                "video_editing_db_id": "video_editing_db_014",
+                "video_editing_db_version": 3,
+            },
+        },
+    )
+
+    result = ai_client.submit_shortform_turn(
+        Store(id=10, user_id=1, name="행복분식"),
+        "sf_123",
+        {},
+        {"type": "CONFIRM", "value": True},
+        None,
+    )
+
+    assert result.recommendation is not None
+    assert result.recommendation.editing_template_id == "video_editing_db_014"
+    assert result.recommendation.editing_template_version == 3
 
 
 def test_face_exposure_unknown_value_falls_back_to_not_allowed() -> None:

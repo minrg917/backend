@@ -130,8 +130,11 @@ def _recommendation(item: dict[str, Any] | None) -> "Recommendation | None":
         project_title=str(item["project_title"]),
         title=str(item["title"]),
         concept=str(item["concept"]),
-        editing_template_id=str(item["editing_template_id"]),
-        editing_template_version=int(item["editing_template_version"]),
+        # AI 서버의 wire contract는 video_editing_db_*를 쓴다. 백엔드 내부와
+        # 공개 API에서는 기존 editing_template_* 이름을 유지하고 이 경계에서만
+        # 변환한다.
+        editing_template_id=str(item["video_editing_db_id"]),
+        editing_template_version=int(item["video_editing_db_version"]),
     )
 
 
@@ -223,7 +226,7 @@ def get_shooting_guide(
     data = _request_json(
         "GET",
         (
-            f"/api/v1/editing-templates/{video_format.editing_template_id}"
+            f"/api/v1/video-editing-db/{video_format.editing_template_id}"
             f"/versions/{video_format.editing_template_version}/shooting-guide"
         ),
     )
@@ -454,8 +457,8 @@ def start_editing_run(
             },
             "selected_shortform": {
                 "recommendation_id": project.recommendation_id or f"project_{project.id}",
-                "editing_template_id": video_format.editing_template_id,
-                "editing_template_version": video_format.editing_template_version,
+                "video_editing_db_id": video_format.editing_template_id,
+                "video_editing_db_version": video_format.editing_template_version,
             },
             "videos": [
                 {
