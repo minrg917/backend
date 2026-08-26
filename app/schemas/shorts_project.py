@@ -309,12 +309,20 @@ class OverlayGuide(BaseSchema):
 class ReferenceVideo(BaseSchema):
     """댄스·안무 가이드용 원본 영상.
 
-    포맷 하나당 하나이므로 태스크별로 저장하지 않고 `video_formats`에서 가져온다
-    (`docs/PM_DECISIONS.md` 2026-08-21 R10 항목).
+    영상 자체(`reference_url`)는 포맷 하나당 하나이므로 태스크별로 저장하지 않고
+    `video_formats`에서 가져온다(`docs/PM_DECISIONS.md` 2026-08-21 R10 항목).
+
+    `start_ms`/`end_ms`는 그 영상 안에서 **이 태스크가 담당하는 구간**이다
+    (2026-08-26 추가). 같은 안무 영상을 여러 태스크(컷)가 나눠 찍을 때, 태스크마다
+    다른 구간을 보여줘야 해서 이건 태스크별로 다르다 — AI가 태스크의 `guide`
+    안에 실어준 값을 그대로 통과시킨다. 값이 없으면(옛 데이터·AI 미제공) 프론트가
+    영상 전체를 보여주면 된다.
     """
 
     reference_url: str
     source_platform: str | None
+    start_ms: int | None = None
+    end_ms: int | None = None
 
 
 class BrollShot(BaseSchema):

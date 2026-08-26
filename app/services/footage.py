@@ -43,7 +43,7 @@ def build_guide(db: Session, task: ShootingTask) -> TaskGuideResponse:
 
     reference_video = None
     if guide_type is GuideType.DANCE:
-        reference_video = _reference_video(db, task)
+        reference_video = _reference_video(db, task, guide)
 
     overlay = None
     if guide_type is GuideType.OVERLAY:
@@ -75,7 +75,7 @@ def _scene_shot_type(db: Session, task: ShootingTask) -> str | None:
     return scene.shot_type if scene else None
 
 
-def _reference_video(db: Session, task: ShootingTask) -> ReferenceVideo | None:
+def _reference_video(db: Session, task: ShootingTask, guide: dict) -> ReferenceVideo | None:
     """안무 영상은 포맷 하나당 하나다 — 프로젝트가 고른 포맷에서 가져온다.
 
     태스크별 컬럼을 두지 않기로 한 결정(`docs/PM_DECISIONS.md` 2026-08-21 R10).
@@ -87,6 +87,11 @@ def _reference_video(db: Session, task: ShootingTask) -> ReferenceVideo | None:
 
     가이드 영상이 없으면 대표 영상으로 떨어진다 — 트렌드 연동 전에 들어온 포맷과
     R06 추천으로 적재된 포맷에는 아직 이 값이 없다.
+
+    `start_ms`/`end_ms`(2026-08-26 추가)는 영상과 달리 포맷이 아니라 **태스크의
+    `guide`**에서 온다 — 같은 영상이라도 태스크(컷)마다 봐야 할 구간이 다르기
+    때문이다. AI가 안 줬으면(연동 전·구버전) `None`으로 둔다 — 값을 지어내면
+    엉뚱한 구간을 정답인 것처럼 보여주게 된다.
     """
     project = db.get(ShortsProject, task.shorts_project_id)
     if project is None or project.video_format_id is None:
@@ -97,6 +102,8 @@ def _reference_video(db: Session, task: ShootingTask) -> ReferenceVideo | None:
     return ReferenceVideo(
         reference_url=video_format.guide_video_url or video_format.reference_url,
         source_platform=video_format.source_platform,
+        start_ms=guide.get("start_ms"),
+        end_ms=guide.get("end_ms"),
     )
 
 
