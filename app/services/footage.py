@@ -35,15 +35,19 @@ def build_guide(db: Session, task: ShootingTask) -> TaskGuideResponse:
     값이 세 곳에 흩어져 있다 — 태스크의 `guide`(AI 생성), 콘티의 `shot_type`,
     포맷의 `reference_url`. 중복 저장하지 않고 필요할 때 모은다.
 
-    `guide_type`에 따라 채우는 블록이 다르다. 명세서가 쓰지 않는 블록을 `null`로
-    내리도록 정의하고 있어, 키는 항상 있고 값만 비운다.
+    `guide_type`에 따라 `overlay`/`broll_shot`을 채우는 블록은 다르다. 명세서가
+    쓰지 않는 블록을 `null`로 내리도록 정의하고 있어, 키는 항상 있고 값만 비운다.
+
+    `reference_video`는 2026-08-26부터 **`guide_type`과 무관하게 항상** 채운다 —
+    AI가 `guide_type`을 계약에서 제거하면서(`docs/PM_DECISIONS.md` 확인),
+    "가이드를 제공할 때는 항상 참고영상 구간(`start_ms`/`end_ms`)을 함께 준다"는
+    쪽으로 방향이 바뀌었다. 예전엔 `DANCE`일 때만 채웠는데, 이제 `guide_type`이
+    항상 `OVERLAY`로 고정되는 상황이라 그 기준으로 걸면 영원히 안 나가게 된다.
     """
     guide = task.guide or {}
     guide_type = GuideType(guide.get("guide_type", GuideType.OVERLAY))
 
-    reference_video = None
-    if guide_type is GuideType.DANCE:
-        reference_video = _reference_video(db, task, guide)
+    reference_video = _reference_video(db, task, guide)
 
     overlay = None
     if guide_type is GuideType.OVERLAY:
