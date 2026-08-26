@@ -96,6 +96,59 @@ def test_sync_loads_trend_cluster(db_session: Session, monkeypatch: pytest.Monke
     ) == ("밈", 10, "중", False)
 
 
+def test_sync_keeps_only_three_hardcoded_trends_active(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """기존 결과와 AI의 추가 결과가 있어도 홈 피드에는 확정된 3건만 남는다."""
+    legacy = VideoFormat(
+        format_title="기존 시드 포맷",
+        reference_url="https://www.youtube.com/watch?v=SEED0000001",
+    )
+    old_trend = VideoFormat(
+        format_title="예전 트렌드",
+        reference_url="https://youtu.be/old-trend",
+        trend_challenge_id="old_trend",
+        trend_rank=1,
+    )
+    db_session.add_all([legacy, old_trend])
+    db_session.commit()
+
+    payload = {
+        **TRENDCLUSTER,
+        "count": 4,
+        "results": [
+            *TRENDCLUSTER["results"],
+            {
+                "id": "unexpected_new_trend",
+                "rank": 4,
+                "name": "AI가 추가로 반환한 트렌드",
+                "representative_youtube_url": "https://youtu.be/unexpected",
+            },
+        ],
+    }
+    _stub_ai(monkeypatch, payload)
+
+    added, updated, skipped = sync_trend_formats(db_session)
+    assert (added, updated, skipped) == (3, 0, 1)
+
+    active = list(
+        db_session.scalars(
+            select(VideoFormat)
+            .where(VideoFormat.is_active.is_(True))
+            .order_by(VideoFormat.trend_rank)
+        )
+    )
+    assert [item.trend_challenge_id for item in active] == [
+        "jujutsu_transition",
+        "cafe_recommendation_reels",
+        "otsukare_summer_challenge",
+    ]
+    db_session.refresh(legacy)
+    db_session.refresh(old_trend)
+    assert legacy.is_active is False
+    assert old_trend.is_active is False
+
+
 def test_sync_is_idempotent_and_updates(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -186,7 +239,7 @@ def test_sync_does_not_erase_curated_metadata_when_ai_omits_it(
     existing = VideoFormat(
         format_title="기존 포맷",
         reference_url="https://youtu.be/existing",
-        trend_challenge_id="existing",
+        trend_challenge_id="jujutsu_transition",
         format_type="직접 입력",
         expected_duration_sec=25,
         shooting_difficulty="하",
@@ -197,7 +250,7 @@ def test_sync_does_not_erase_curated_metadata_when_ai_omits_it(
     payload = {
         "results": [
             {
-                "id": "existing",
+                "id": "jujutsu_transition",
                 "rank": 1,
                 "name": "기존 포맷 갱신",
                 "representative_youtube_url": "https://youtu.be/existing",

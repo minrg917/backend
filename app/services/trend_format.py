@@ -12,11 +12,19 @@
 영상이 교체되면 URL이 바뀌는데, URL 기준이면 같은 챌린지가 두 행이 된다.
 """
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.video_format import VideoFormat
 from app.services import ai_client
+
+# 홈 피드의 데이터 소스는 현재 트렌드 클러스터에서 확정한 아래 3건으로 고정한다.
+# AI 서버가 더 많은 챌린지를 반환해도 이 목록 밖의 항목은 노출하지 않는다.
+ACTIVE_TREND_CHALLENGE_IDS = (
+    "jujutsu_transition",
+    "cafe_recommendation_reels",
+    "otsukare_summer_challenge",
+)
 
 
 def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChallenge) -> None:
@@ -41,9 +49,20 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
     대표 영상 URL이 없는 챌린지는 건너뛴다 — 피드 카드는 영상 없이 성립하지 않고,
     빈 값으로 행을 만들면 앱에 재생 안 되는 카드가 그대로 노출된다.
     """
-    challenges = ai_client.list_trend_challenges()
+    received_challenges = ai_client.list_trend_challenges()
+    challenges_by_id = {challenge.id: challenge for challenge in received_challenges}
+    challenges = [
+        challenges_by_id[challenge_id]
+        for challenge_id in ACTIVE_TREND_CHALLENGE_IDS
+        if challenge_id in challenges_by_id
+    ]
 
-    added = updated = skipped = 0
+    # 기존 시드·R06 템플릿·이전 트렌드 결과를 삭제하지 않고 비활성화한다.
+    # 찜/프로젝트의 FK는 보존하면서 `/video-formats`에는 확정된 3건만 보이게 한다.
+    db.execute(update(VideoFormat).values(is_active=False))
+
+    added = updated = 0
+    skipped = len(received_challenges) - len(challenges)
     for challenge in challenges:
         reference_url = challenge.representative_youtube_url
         if not reference_url:
@@ -68,6 +87,7 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
                 source_platform="YOUTUBE",
                 trend_challenge_id=challenge.id,
                 trend_rank=challenge.rank,
+                is_active=True,
             )
             _apply_ai_metadata(video_format, challenge)
             db.add(video_format)
@@ -81,6 +101,7 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
         video_format.source_platform = "YOUTUBE"
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
+        video_format.is_active = True
         _apply_ai_metadata(video_format, challenge)
         updated += 1
 
