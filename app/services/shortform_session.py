@@ -220,6 +220,25 @@ def get_next_recommendation(db: Session, session: ShortformSession) -> tuple[lis
     return recommendations, shown
 
 
+def find_video_format_id(
+    db: Session, editing_template_id: str, editing_template_version: int
+) -> int | None:
+    """추천 카드에 보여줄 `video_format_id`를 조회한다 (2026-08-26 추가).
+
+    **읽기 전용이다 — `_resolve_video_format`과 달리 없으면 만들지 않는다.**
+    이 함수는 추천을 "보여줄 때"(수락 전) 호출되는데, 여기서 없다고 새로
+    만들면 사장님이 고르지도 않은 템플릿이 `is_active=True`인 채로 5.1 피드에
+    가짜 영상(`internal://...`) 카드로 노출된다. 아직 한 번도 채택된 적 없는
+    템플릿이면 매칭되는 행이 없는 게 정상이라 `None`을 돌려준다.
+    """
+    return db.scalar(
+        select(VideoFormat.id).where(
+            VideoFormat.editing_template_id == editing_template_id,
+            VideoFormat.editing_template_version == editing_template_version,
+        )
+    )
+
+
 def _resolve_video_format(db: Session, recommendation: dict[str, Any]) -> VideoFormat:
     """추천받은 영상편집템플릿을 우리 `video_formats`에 연결한다.
 

@@ -135,6 +135,26 @@ def test_guide_takes_shot_type_from_scene(
     assert body["broll_shot"]["shot_type"] == scenes[0]["shot_type"]
 
 
+def test_overlay_guide_also_includes_reference_video(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    video_format: VideoFormat,
+) -> None:
+    """`reference_video`는 이제 guide_type과 무관하게 항상 채워진다(2026-08-26).
+
+    AI가 guide_type을 계약에서 제거하면서 "가이드를 제공할 때는 항상 참고영상
+    구간을 함께 준다"는 쪽으로 바뀌었다. 예전엔 DANCE에서만 채웠는데, 이제
+    guide_type이 항상 OVERLAY로 고정되는 상황이라 그 기준으로 걸면 영원히
+    안 나가게 된다 — 그래서 OVERLAY 태스크에서도 채워야 한다.
+    """
+    body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
+
+    assert body["guide_type"] == "OVERLAY"
+    assert body["reference_video"] is not None
+    assert body["reference_video"]["reference_url"] == video_format.reference_url
+
+
 def test_dance_guide_uses_format_reference_video(
     client: TestClient,
     auth_headers: dict[str, str],
