@@ -96,6 +96,87 @@ def test_sync_loads_trend_cluster(db_session: Session, monkeypatch: pytest.Monke
     ) == ("밈", 10, "중", False)
 
 
+def test_sync_links_editing_template_when_approved(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """승인 완료된 챌린지는 editing_template_id/version이 그대로 연결된다."""
+    payload = {
+        "results": [
+            {
+                **TRENDCLUSTER["results"][0],
+                "editing_template_id": "gt_jujutsu_transition",
+                "editing_template_version": 4,
+            }
+        ]
+    }
+    _stub_ai(monkeypatch, payload)
+
+    sync_trend_formats(db_session)
+
+    linked = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
+    )
+    assert linked is not None
+    assert linked.editing_template_id == "gt_jujutsu_transition"
+    assert linked.editing_template_version == 4
+
+
+def test_sync_leaves_editing_template_unlinked_when_not_yet_approved(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """승인 전(필드 없음)이면 editing_template_id를 비워둔다 — 지어내지 않는다."""
+    _stub_ai(monkeypatch, TRENDCLUSTER)
+
+    sync_trend_formats(db_session)
+
+    linked = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
+    )
+    assert linked is not None
+    assert linked.editing_template_id is None
+    assert linked.editing_template_version is None
+
+
+def test_sync_deactivates_format_when_ai_marks_challenge_inactive(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI가 트렌드에서 내린 챌린지는 우리 피드에서도 바로 빠져야 한다."""
+    _stub_ai(monkeypatch, TRENDCLUSTER)
+    sync_trend_formats(db_session)
+
+    deactivated = {
+        **TRENDCLUSTER,
+        "results": [
+            {**TRENDCLUSTER["results"][0], "active": False},
+            *TRENDCLUSTER["results"][1:],
+        ],
+    }
+    _stub_ai(monkeypatch, deactivated)
+    sync_trend_formats(db_session)
+
+    row = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
+    )
+    assert row is not None
+    assert row.is_active is False
+
+
+def test_list_trend_challenges_requests_inactive_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """비활성 챌린지도 받아와야 is_active 동기화가 가능하다."""
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        captured["url"] = url
+        return httpx.Response(200, json={"results": []}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    ai_client.list_trend_challenges()
+
+    assert "include_inactive=true" in captured["url"]
+
+
 def test_sync_is_idempotent_and_updates(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

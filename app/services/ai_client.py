@@ -210,6 +210,14 @@ class TrendChallenge:
     expected_duration_sec: int | None = None
     shooting_difficulty: str | None = None
     requires_face: bool | None = None
+    # 이 챌린지의 촬영가이드 템플릿이 승인 완료됐을 때만 채워진다(2026-08-26 AI팀
+    # 확인). null이면 아직 승인 전이라 촬영가이드를 조회할 수 없다는 뜻이다.
+    editing_template_id: str | None = None
+    editing_template_version: int | None = None
+    # AI가 트렌드에서 내린(철 지난) 챌린지인지. 기본 목록 조회는 활성만 주므로
+    # `include_inactive=true`로 비활성까지 받아서 우리 쪽 `is_active`에 그대로
+    # 반영한다 — 안 그러면 AI가 내린 챌린지가 우리 피드엔 계속 남는다.
+    active: bool = True
 
 
 def list_trend_challenges() -> list[TrendChallenge]:
@@ -226,7 +234,7 @@ def list_trend_challenges() -> list[TrendChallenge]:
     if not is_enabled():
         return []
 
-    data = _request_json("GET", "/api/v1/challenges")
+    data = _request_json("GET", "/api/v1/challenges?include_inactive=true")
     challenges: list[TrendChallenge] = []
     for item in data.get("results") or []:
         challenge_id = item.get("id")
@@ -249,6 +257,13 @@ def list_trend_challenges() -> list[TrendChallenge]:
                 ),
                 shooting_difficulty=item.get("shooting_difficulty"),
                 requires_face=item.get("requires_face"),
+                editing_template_id=item.get("editing_template_id"),
+                active=bool(item.get("active", True)),
+                editing_template_version=(
+                    int(item["editing_template_version"])
+                    if item.get("editing_template_version") is not None
+                    else None
+                ),
             )
         )
     return challenges
