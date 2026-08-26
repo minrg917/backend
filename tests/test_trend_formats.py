@@ -125,6 +125,51 @@ def test_sync_links_editing_template_when_approved(
     assert linked.is_active is True
 
 
+def test_sync_activates_existing_row_instead_of_duplicating_template_pair(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R06 추천이 이미 만든 행과 같은 (template_id, version)이면 그 행을 대신 켠다.
+
+    실서버에서 실제로 겪은 문제(2026-08-26): 같은 챌린지가 R06 경로와 트렌드
+    경로로 각각 행을 만들었는데, 트렌드 동기화가 같은 (template_id, version)
+    쌍을 새 행에도 쓰려다가 UNIQUE 제약 위반으로 커밋 전체가 실패했다.
+    """
+    r06_row = VideoFormat(
+        format_title="R06 추천으로 만들어진 행",
+        reference_url="internal://editing-template/gt_jujutsu_transition/v4",
+        editing_template_id="gt_jujutsu_transition",
+        editing_template_version=4,
+        is_active=False,
+    )
+    db_session.add(r06_row)
+    db_session.commit()
+
+    payload = {
+        "results": [
+            {
+                **TRENDCLUSTER["results"][0],
+                "editing_template_id": "gt_jujutsu_transition",
+                "editing_template_version": 4,
+            }
+        ]
+    }
+    _stub_ai(monkeypatch, payload)
+
+    added, updated, skipped = sync_trend_formats(db_session)
+    assert (added, updated, skipped) == (1, 0, 0)
+
+    db_session.refresh(r06_row)
+    assert r06_row.is_active is True
+
+    trend_row = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
+    )
+    assert trend_row is not None
+    # 트렌드 행 쪽엔 값을 넣지 않는다 — 실제로 쓰이는 건 R06 행이다.
+    assert trend_row.editing_template_id is None
+    assert trend_row.is_active is False
+
+
 def test_sync_leaves_editing_template_unlinked_when_not_yet_approved(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
