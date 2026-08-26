@@ -13,6 +13,7 @@ from app.schemas.common import MessageResponse
 from app.schemas.shortform_session import (
     NextRecommendationResponse,
     RecommendationResponse,
+    SessionAcceptRequest,
     SessionAcceptResponse,
     SessionOptionResponse,
     TurnRequest,
@@ -29,25 +30,24 @@ def submit_turn(
 ) -> TurnResponse:
     """대화 turn 하나를 보낸다(텍스트/선택지/확인)."""
     session = session_service.get_owned_session(db, user, session_id)
-    result = session_service.submit_turn(db, session, payload.input)
+    result, recommendations = session_service.submit_turn(db, session, payload.input)
     return TurnResponse(
         id=session.id,
         action=result.action,
         assistant_message=result.assistant_message,
         project_state=result.project_state,
         options=[SessionOptionResponse(id=o.id, label=o.label) for o in result.options],
-        recommendation=(
+        recommendations=[
             RecommendationResponse(
-                recommendation_id=result.recommendation.recommendation_id,
-                project_title=result.recommendation.project_title,
-                title=result.recommendation.title,
-                concept=result.recommendation.concept,
-                editing_template_id=result.recommendation.editing_template_id,
-                editing_template_version=result.recommendation.editing_template_version,
+                recommendation_id=r.recommendation_id,
+                project_title=r.project_title,
+                title=r.title,
+                concept=r.concept,
+                editing_template_id=r.editing_template_id,
+                editing_template_version=r.editing_template_version,
             )
-            if result.recommendation
-            else None
-        ),
+            for r in recommendations
+        ],
     )
 
 
@@ -55,19 +55,22 @@ def submit_turn(
 def get_next_recommendation(
     session_id: int, user: CurrentUser, db: DbSession
 ) -> NextRecommendationResponse:
-    """같은 세션에서 이전 템플릿을 제외한 다음 추천을 받는다."""
+    """같은 세션에서 이전 템플릿들을 제외한 다음 추천 묶음을 받는다."""
     session = session_service.get_owned_session(db, user, session_id)
-    recommendation, shown_ids = session_service.get_next_recommendation(db, session)
+    recommendations, shown_ids = session_service.get_next_recommendation(db, session)
     return NextRecommendationResponse(
         id=session.id,
-        recommendation=RecommendationResponse(
-            recommendation_id=recommendation.recommendation_id,
-            project_title=recommendation.project_title,
-            title=recommendation.title,
-            concept=recommendation.concept,
-            editing_template_id=recommendation.editing_template_id,
-            editing_template_version=recommendation.editing_template_version,
-        ),
+        recommendations=[
+            RecommendationResponse(
+                recommendation_id=r.recommendation_id,
+                project_title=r.project_title,
+                title=r.title,
+                concept=r.concept,
+                editing_template_id=r.editing_template_id,
+                editing_template_version=r.editing_template_version,
+            )
+            for r in recommendations
+        ],
         shown_template_ids=shown_ids,
     )
 
@@ -76,11 +79,11 @@ def get_next_recommendation(
     "/{session_id}/accept", response_model=SessionAcceptResponse, status_code=HTTPStatus.CREATED
 )
 def accept_recommendation(
-    session_id: int, user: CurrentUser, db: DbSession
+    session_id: int, payload: SessionAcceptRequest, user: CurrentUser, db: DbSession
 ) -> SessionAcceptResponse:
-    """마지막 추천을 수락해 숏폼 프로젝트를 만든다. AI 호출 없이 BE 로직만으로 처리된다."""
+    """추천 카드 중 하나를 수락해 숏폼 프로젝트를 만든다. AI 호출 없이 BE 로직만으로 처리된다."""
     session = session_service.get_owned_session(db, user, session_id)
-    project = session_service.accept_recommendation(db, session)
+    project = session_service.accept_recommendation(db, session, payload.recommendation_id)
     return SessionAcceptResponse.model_validate(project)
 
 

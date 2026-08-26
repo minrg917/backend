@@ -59,10 +59,13 @@ class ShortformSession(Base, TimestampMixin):
     project_state: Mapped[dict | None] = mapped_column(
         JSON, nullable=True, comment="최신 project_state 캐시(AI 응답 그대로)"
     )
-    # 마지막으로 받은 추천. accept() 시 이 값을 그대로 프로젝트에 반영한다 —
-    # 프론트가 추천 전체를 다시 보내지 않아도 되게 하기 위함.
-    last_recommendation: Mapped[dict | None] = mapped_column(
-        JSON, nullable=True, comment="최신 recommendation 캐시(AI 응답 그대로)"
+    # 마지막으로 받은 추천 목록(카드 여러 장). accept() 시 그중 하나를
+    # recommendation_id로 찾아 그대로 프로젝트에 반영한다 — 프론트가 추천 전체를
+    # 다시 보내지 않아도 되게 하기 위함. AI는 호출 한 번에 1개만 주지만
+    # (`docs/AI_연동_입출력.md` 9번), 화면엔 여러 장을 한 번에 보여주므로
+    # 백엔드가 여러 번 호출해 묶은 결과를 리스트로 캐시한다(2026-08-26).
+    last_recommendation: Mapped[list[dict] | None] = mapped_column(
+        JSON, nullable=True, comment="최신 recommendation 목록 캐시(AI 응답을 묶은 것)"
     )
     # AI 서버가 세션 안에서 직접 관리하는 값이라 우리가 제외 로직을 계산하지 않는다
     # (`docs/AI_연동_입출력.md` 10번 "Backend가 거절 이유를 보내지 않는다"). 응답으로

@@ -20,13 +20,21 @@ from app.services import ai_client
 
 
 def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChallenge) -> None:
-    """Apply only values the AI actually supplied; never erase curated data with null."""
+    """Apply only values the AI actually supplied; never erase curated data with null.
+
+    `editing_template_id`/`version`은 이 챌린지의 촬영가이드 템플릿이 AI 쪽에서
+    승인 완료됐을 때만 채워진다(2026-08-26 확인). 이 값이 채워져야 5.1에서 고른
+    포맷으로 실제 기획 생성(`get_shooting_guide`)이 가능해진다 — 그 전엔
+    `editing_template_id`가 없어 `NotImplementedError`로 막힌다.
+    """
 
     for field in (
         "format_type",
         "expected_duration_sec",
         "shooting_difficulty",
         "requires_face",
+        "editing_template_id",
+        "editing_template_version",
     ):
         value = getattr(challenge, field)
         if value is not None:
@@ -68,6 +76,7 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
                 source_platform="YOUTUBE",
                 trend_challenge_id=challenge.id,
                 trend_rank=challenge.rank,
+                is_active=challenge.active,
             )
             _apply_ai_metadata(video_format, challenge)
             db.add(video_format)
@@ -75,12 +84,15 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
             continue
 
         # AI가 제공한 값은 매번 갱신하되, null은 사람이 채운 값을 지우지 않는다.
+        # is_active는 예외 — AI가 트렌드에서 내린 챌린지는 우리 피드에서도 바로
+        # 빠져야 하므로, null-보존 규칙과 무관하게 항상 그대로 반영한다.
         video_format.format_title = challenge.name
         video_format.reference_url = reference_url
         video_format.guide_video_url = challenge.guide_youtube_url
         video_format.source_platform = "YOUTUBE"
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
+        video_format.is_active = challenge.active
         _apply_ai_metadata(video_format, challenge)
         updated += 1
 
