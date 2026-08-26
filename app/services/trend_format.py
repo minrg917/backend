@@ -12,7 +12,7 @@
 영상이 교체되면 URL이 바뀌는데, URL 기준이면 같은 챌린지가 두 행이 된다.
 """
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.video_format import VideoFormat
@@ -77,8 +77,15 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
 
     대표 영상 URL이 없는 챌린지는 건너뛴다 — 피드 카드는 영상 없이 성립하지 않고,
     빈 값으로 행을 만들면 앱에 재생 안 되는 카드가 그대로 노출된다.
+
+    **AI 목록에서 완전히 빠진 챌린지는 비활성화한다.** 이 루프는 "지금 응답에
+    있는 것"만 갱신하므로, AI가 목록 자체를 줄이면(예: 48건 → 3건) 빠진 챌린지의
+    예전 `is_active` 값이 그대로 남는다 — 그래서 루프 뒤에 마무리 반영이 따로
+    필요하다(2026-08-26 실서버에서 실제로 겪음: 응답이 48건에서 3건으로 줄었는데
+    나머지 45건이 활성 상태로 남아 있었다).
     """
     challenges = ai_client.list_trend_challenges()
+    seen_challenge_ids = [challenge.id for challenge in challenges]
 
     added = updated = skipped = 0
     for challenge in challenges:
@@ -130,6 +137,15 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
         _link_editing_template(db, video_format, challenge)
         video_format.is_active = video_format.editing_template_id is not None
         updated += 1
+
+    # AI가 응답을 준 경우(연동 꺼짐이 아닌 경우)에만 마무리 비활성화를 한다 —
+    # AI_SERVER_URL이 없어 challenges가 빈 목록일 때 트렌드 행을 전부 꺼버리면
+    # 안 된다.
+    if ai_client.is_enabled():
+        reconcile = update(VideoFormat).where(VideoFormat.trend_challenge_id.is_not(None))
+        if seen_challenge_ids:
+            reconcile = reconcile.where(VideoFormat.trend_challenge_id.not_in(seen_challenge_ids))
+        db.execute(reconcile.values(is_active=False))
 
     db.commit()
     return added, updated, skipped
