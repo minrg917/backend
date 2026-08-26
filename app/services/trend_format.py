@@ -20,25 +20,54 @@ from app.services import ai_client
 
 
 def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChallenge) -> None:
-    """Apply only values the AI actually supplied; never erase curated data with null.
-
-    `editing_template_id`/`version`은 이 챌린지의 촬영가이드 템플릿이 AI 쪽에서
-    승인 완료됐을 때만 채워진다(2026-08-26 확인). 이 값이 채워져야 5.1에서 고른
-    포맷으로 실제 기획 생성(`get_shooting_guide`)이 가능해진다 — 그 전엔
-    `editing_template_id`가 없어 `NotImplementedError`로 막힌다.
-    """
+    """Apply only values the AI actually supplied; never erase curated data with null."""
 
     for field in (
         "format_type",
         "expected_duration_sec",
         "shooting_difficulty",
         "requires_face",
-        "editing_template_id",
-        "editing_template_version",
     ):
         value = getattr(challenge, field)
         if value is not None:
             setattr(video_format, field, value)
+
+
+def _link_editing_template(
+    db: Session, video_format: VideoFormat, challenge: ai_client.TrendChallenge
+) -> None:
+    """승인된 챌린지의 편집 템플릿을 연결한다.
+
+    `editing_template_id`/`version`은 이 챌린지의 촬영가이드 템플릿이 AI 쪽에서
+    승인 완료됐을 때만 채워진다(2026-08-26 확인). 이 값이 채워져야 5.1에서 고른
+    포맷으로 실제 기획 생성(`get_shooting_guide`)이 가능해진다 — 그 전엔
+    `editing_template_id`가 없어 `NotImplementedError`로 막힌다.
+
+    **같은 (template_id, version) 쌍을 R06 추천이 만든 행이 이미 갖고 있을 수
+    있다** — 같은 실제 챌린지가 서로 다른 두 경로(트렌드 동기화 / R06 추천 수락)로
+    각각 행을 만들었기 때문이다. 이 쌍엔 UNIQUE 제약이 있어 트렌드 행에도 그대로
+    쓰면 커밋이 실패한다(2026-08-26 실서버에서 실제로 발생). 이미 다른 행이 그
+    쌍을 갖고 있으면, 트렌드 행엔 값을 넣지 않고 **그 다른 행을 대신 활성화**한다
+    — 실제로 프로젝트가 참조하는 건 그 행이기 때문이다.
+    """
+    template_id = challenge.editing_template_id
+    version = challenge.editing_template_version
+    if template_id is None or version is None:
+        return
+
+    conditions = [
+        VideoFormat.editing_template_id == template_id,
+        VideoFormat.editing_template_version == version,
+    ]
+    if video_format.id is not None:
+        conditions.append(VideoFormat.id != video_format.id)
+    existing_owner = db.scalar(select(VideoFormat).where(*conditions))
+    if existing_owner is not None:
+        existing_owner.is_active = True
+        return
+
+    video_format.editing_template_id = template_id
+    video_format.editing_template_version = version
 
 
 def sync_trend_formats(db: Session) -> tuple[int, int, int]:
@@ -78,6 +107,7 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
                 trend_rank=challenge.rank,
             )
             _apply_ai_metadata(video_format, challenge)
+            _link_editing_template(db, video_format, challenge)
             # 트렌드 인기 여부(challenge.active)가 아니라 "촬영가이드 템플릿이
             # 실제로 있는가"로 활성화 여부를 정한다(2026-08-26 정정). 발굴은
             # 됐지만 아직 승인 전인 챌린지는 트렌드로는 active여도 고르면
@@ -97,6 +127,7 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
         _apply_ai_metadata(video_format, challenge)
+        _link_editing_template(db, video_format, challenge)
         video_format.is_active = video_format.editing_template_id is not None
         updated += 1
 
