@@ -179,6 +179,49 @@ def test_dance_guide_prefers_guide_video(
     assert body["reference_video"]["reference_url"] != video_format.reference_url
 
 
+def test_dance_guide_includes_task_specific_segment(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    db_session: Session,
+) -> None:
+    """같은 안무 영상을 태스크(컷)마다 다른 구간으로 잘라 보여준다(2026-08-26 추가).
+
+    영상 자체는 포맷 하나당 하나지만, start_ms/end_ms는 태스크마다 달라야 해서
+    포맷이 아니라 태스크의 guide에서 온다.
+    """
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"guide_type": "DANCE", "start_ms": 1800, "end_ms": 4300}
+    db_session.commit()
+
+    body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
+
+    assert body["reference_video"]["start_ms"] == 1800
+    assert body["reference_video"]["end_ms"] == 4300
+
+
+def test_dance_guide_segment_is_null_when_ai_omits_it(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    db_session: Session,
+) -> None:
+    """AI가 구간을 안 주면(연동 전·구버전) 지어내지 않고 null로 둔다.
+
+    프론트는 이때 영상 전체를 보여주면 된다.
+    """
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"guide_type": "DANCE"}
+    db_session.commit()
+
+    body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
+
+    assert body["reference_video"]["start_ms"] is None
+    assert body["reference_video"]["end_ms"] is None
+
+
 def test_guide_hidden_from_other_user(
     client: TestClient, task_id: int, other_headers: dict[str, str]
 ) -> None:

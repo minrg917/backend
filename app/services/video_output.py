@@ -67,11 +67,14 @@ def create_outputs(
         # 완료 시 채운 값만 쓴다(`docs/AI_연동_입출력.md` 22번 — 별도 LLM 호출 없음).
         kit = ai_client.generate_publish_kit(store, project)
         project.publish_kit = {
+            "title": kit.title,
             "caption": kit.caption,
             "hashtags": kit.hashtags,
             "post_note": kit.post_note,
             "track": kit.track,
         }
+
+    _ensure_publish_kit_contract(db, project)
 
     # 새 산출물이 없어도 publish_kit이 바뀌었을 수 있으므로 커밋은 항상 필요하다.
     db.commit()
@@ -101,6 +104,7 @@ def get_outputs(db: Session, project: ShortsProject) -> tuple[list[VideoOutput],
 
     outputs = [edit_service.sync_output(db, row) for row in latest_by_platform.values()]
     outputs.sort(key=lambda row: row.id)
+    _ensure_publish_kit_contract(db, project)
     return outputs, project.publish_kit
 
 
@@ -111,6 +115,86 @@ def _latest_output(
     if platform is not None:
         statement = statement.where(VideoOutput.target_platform == platform)
     return db.scalars(statement.order_by(VideoOutput.id.desc()).limit(1)).first()
+
+
+def _ensure_publish_kit_contract(db: Session, project: ShortsProject) -> None:
+    """마이그레이션 없이, 저장된 옛 계약의 게시자료를 지금 계약으로 보정한다.
+
+    `title`·`hashtags`(5개 이상)·`track.search_keyword`가 계약에 새로 추가되면서
+    (2026-08-26), 그 전에 저장된 `publish_kit`에는 이 필드들이 없다. 매번 여기서
+    채워 넣어, 옛 데이터를 가진 프로젝트도 15.1 응답이 새 계약을 그대로 만족하게
+    한다.
+    """
+    if not project.publish_kit:
+        return
+    kit = dict(project.publish_kit)
+    caption = str(kit.get("caption") or "").strip()
+    if not kit.get("title"):
+        if caption:
+            first, *rest = caption.splitlines()
+            kit["title"] = (project.project_title or first or "게시글")[:80]
+            kit["caption"] = _strip_operational_copy("\n".join(rest).strip() or caption) or (
+                "영상의 내용을 확인해 보세요."
+            )
+        else:
+            # caption조차 비어 있으면(예상 못 한 옛 데이터) first를 뽑을 데가
+            # 없다 — "".splitlines()가 빈 리스트라 언팩이 그대로 터진다.
+            kit["title"] = (project.project_title or "게시글")[:80]
+            kit["caption"] = "영상의 내용을 확인해 보세요."
+
+    hashtags = [str(value) for value in (kit.get("hashtags") or [])]
+    for fallback in ("#숏폼", "#릴스", "#매장소개", "#가게소개", "#동네맛집"):
+        if len(hashtags) >= 5:
+            break
+        if fallback not in hashtags:
+            hashtags.append(fallback)
+    kit["hashtags"] = hashtags
+
+    # AI팀이 정확한 초 단위를 못 준다고 확인해(2026-08-26) 항상 null로 둔다 —
+    # 필드는 지우지 않는다(`schemas.shorts_project.TrackInfo` 독스트링 참고).
+    track = dict(kit.get("track") or {})
+    track["start_sec"] = None
+    track["end_sec"] = None
+    if not track.get("title") and not track.get("search_keyword"):
+        video_format = (
+            db.get(VideoFormat, project.video_format_id)
+            if project.video_format_id is not None
+            else None
+        )
+        keyword = _search_keyword(video_format.format_title if video_format else "트렌드 음원")
+        track.update(
+            {
+                "mode": "SUGGESTED",
+                "title": None,
+                "artist": None,
+                "mood": track.get("mood"),
+                "search_keyword": keyword,
+            }
+        )
+        kit["post_note"] = f"플랫폼 음원 검색에서 '{keyword}'을 검색해 직접 추가해주세요."
+    kit["track"] = track
+
+    if kit != project.publish_kit:
+        project.publish_kit = kit
+        db.commit()
+
+
+def _search_keyword(value: str) -> str:
+    keyword = value.strip()
+    for suffix in ("트랜지션", "챌린지", "릴스", "숏폼", "포맷"):
+        keyword = keyword.replace(suffix, " ")
+    return (" ".join(keyword.split()) or "트렌드 음원")[:80]
+
+
+def _strip_operational_copy(value: str) -> str:
+    """캡션에 섞여 들어온 "음원은 플랫폼에서 추가하세요" 같은 운영 안내 문구를 잘라낸다."""
+    text = value.strip()
+    positions = [
+        text.find(marker)
+        for marker in ("음악은", "음원은", "플랫폼에서", "업로드 후", "게시 시")
+        if marker in text
+    ]
+    return text[: min(positions)].rstrip(" ,.!·") if positions else text
 
 
 # ---------------------------------------------------------------- 15.2 완성 숏폼 목록

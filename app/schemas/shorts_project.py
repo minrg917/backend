@@ -309,12 +309,20 @@ class OverlayGuide(BaseSchema):
 class ReferenceVideo(BaseSchema):
     """댄스·안무 가이드용 원본 영상.
 
-    포맷 하나당 하나이므로 태스크별로 저장하지 않고 `video_formats`에서 가져온다
-    (`docs/PM_DECISIONS.md` 2026-08-21 R10 항목).
+    영상 자체(`reference_url`)는 포맷 하나당 하나이므로 태스크별로 저장하지 않고
+    `video_formats`에서 가져온다(`docs/PM_DECISIONS.md` 2026-08-21 R10 항목).
+
+    `start_ms`/`end_ms`는 그 영상 안에서 **이 태스크가 담당하는 구간**이다
+    (2026-08-26 추가). 같은 안무 영상을 여러 태스크(컷)가 나눠 찍을 때, 태스크마다
+    다른 구간을 보여줘야 해서 이건 태스크별로 다르다 — AI가 태스크의 `guide`
+    안에 실어준 값을 그대로 통과시킨다. 값이 없으면(옛 데이터·AI 미제공) 프론트가
+    영상 전체를 보여주면 된다.
     """
 
     reference_url: str
     source_platform: str | None
+    start_ms: int | None = None
+    end_ms: int | None = None
 
 
 class BrollShot(BaseSchema):
@@ -447,8 +455,12 @@ class TrackInfo(BaseSchema):
     음원 라이선스는 그 플랫폼 안에서만 유효하기 때문이다. 대신 사장님이 인스타그램·
     틱톡에서 직접 붙이도록 "무슨 곡을, 어디부터" 알려주는 게 이 필드다.
 
-    `start_sec`은 **원곡에서의 위치**다. 원곡 3분 중 챌린지가 쓰는 건 후렴 15초라,
-    사장님이 슬라이더를 그 지점으로 밀지 않으면 인트로만 깔려 전혀 다른 영상이 된다.
+    `start_sec`/`end_sec`은 원래 **원곡에서의 위치**로 기획됐다(원곡 3분 중 챌린지가
+    쓰는 후렴 15초처럼, 사장님이 슬라이더를 그 지점으로 밀지 않으면 인트로만 깔려
+    전혀 다른 영상이 되는 문제 때문). **AI팀이 정확한 초 단위를 줄 수 없다고
+    확인해(2026-08-26, 기술적 제약) 항상 `null`이다.** 필드는 지우지 않고 남겨둔다 —
+    나중에 AI가 줄 수 있게 되면 이 필드만 채우면 되고, 그 전까지 프론트는 값이
+    있을 때만 슬라이더 안내를 보여주면 된다.
     """
 
     mode: AudioMode
@@ -456,16 +468,18 @@ class TrackInfo(BaseSchema):
     title: str | None = None
     artist: str | None = None
     start_sec: int | None = None
-    # 저장하지 않고 start_sec + 포맷의 완성 영상 길이로 계산한다 —
-    # 두 값을 따로 저장하면 어긋났을 때 어느 쪽이 맞는지 알 수 없다.
     end_sec: int | None = None
     # SUGGESTED에서만 채워진다. 예: "잔잔하고 따뜻한 어쿠스틱"
     mood: str | None = None
+    # 정확한 곡을 특정 못 했을 때 플랫폼에서 검색하도록 제공하는 키워드다.
+    search_keyword: str | None = None
 
 
 class PublishKit(BaseSchema):
+    title: str
     caption: str
-    hashtags: list[str]
+    # 플랫폼 알고리즘 노출을 위한 최소 기준. AI/기본값 조합으로 항상 5개 이상 채운다.
+    hashtags: list[str] = Field(min_length=5, max_length=20)
     post_note: str | None = None
     # 포맷에 음원 정보가 없으면 null이다. 프론트는 이때 음원 카드를 숨긴다.
     track: TrackInfo | None = None

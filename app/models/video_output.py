@@ -7,9 +7,10 @@
 프로젝트당 여러 행이 존재할 수 있다 — 플랫폼별 산출물과 수정 이력 양쪽 때문이다.
 """
 
+from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -74,6 +75,11 @@ class VideoOutput(Base, TimestampMixin):
     )
     available_options: Mapped[list[str] | None] = mapped_column(
         JSON, nullable=True, comment="선택 가능한 대응 옵션(SOURCE_GAP 전용)"
+    )
+    # 편집 완료 푸시 알림(2026-08-26)을 이미 보냈는지. 완료 감시 타이머가 매번
+    # 도는데, 이 값이 없으면 같은 산출물에 계속 알림을 다시 보내게 된다.
+    push_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, comment="편집 완료/실패 푸시 알림을 보낸 시각(UTC)"
     )
 
     def __repr__(self) -> str:

@@ -74,9 +74,11 @@ AWS_SECRET_ACCESS_KEY=
 ```bash
 sudo cp deploy/sarils-api.service /etc/systemd/system/
 sudo cp deploy/sarils-trend-sync.service deploy/sarils-trend-sync.timer /etc/systemd/system/
+sudo cp deploy/sarils-edit-notify.service deploy/sarils-edit-notify.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now sarils-api
 sudo systemctl enable --now sarils-trend-sync.timer
+sudo systemctl enable --now sarils-edit-notify.timer
 
 systemctl status sarils-api
 curl http://127.0.0.1:8000/health      # {"status":"ok","database":"ok"}
@@ -96,6 +98,16 @@ curl http://127.0.0.1:8000/health      # {"status":"ok","database":"ok"}
 sudo systemctl start sarils-trend-sync.service
 systemctl list-timers sarils-trend-sync.timer
 journalctl -u sarils-trend-sync.service -n 50
+```
+
+편집 완료 푸시 알림은 진행 중인 편집을 1분마다 확인합니다(`sarils-edit-notify.timer`).
+**발송 로직은 있지만, 지금은 FE가 아직 푸시 토큰을 등록하지 않아 실제로 알림을 받을
+사용자가 없습니다** — 토큰이 등록되면 자동으로 발송됩니다. 아래로 진행 상황을 봅니다.
+
+```bash
+sudo systemctl start sarils-edit-notify.service
+systemctl list-timers sarils-edit-notify.timer
+journalctl -u sarils-edit-notify.service -n 50
 ```
 
 ## 4. nginx + 도메인 + HTTPS
@@ -227,10 +239,14 @@ jobs:
             .venv/bin/poetry install --without dev
             sudo install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-edit-notify.service /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-edit-notify.timer /etc/systemd/system/
             sudo systemctl daemon-reload
             sudo systemctl restart sarils-api
             sudo systemctl enable sarils-trend-sync.timer
             sudo systemctl restart sarils-trend-sync.timer
+            sudo systemctl enable sarils-edit-notify.timer
+            sudo systemctl restart sarils-edit-notify.timer
 ```
 
 `sarils-api`를 먼저 재시작해 마이그레이션을 끝낸 뒤 트렌드 동기화 타이머를 켠다 —
@@ -252,9 +268,13 @@ sudo tee /etc/sudoers.d/sarils-deploy > /dev/null <<'EOF'
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-api
 ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
 ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-edit-notify.service /etc/systemd/system/
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-edit-notify.timer /etc/systemd/system/
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl daemon-reload
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable sarils-trend-sync.timer
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-trend-sync.timer
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable sarils-edit-notify.timer
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-edit-notify.timer
 EOF
 sudo chmod 0440 /etc/sudoers.d/sarils-deploy
 sudo visudo -c

@@ -1,0 +1,17 @@
+[Unit]
+Description=Notify users by push when their video edit finishes
+After=network-online.target sarils-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/backend
+EnvironmentFile=/home/ubuntu/backend/.env
+ExecStart=/home/ubuntu/backend/.venv/bin/python -m scripts.notify_completed_edits
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/backend
