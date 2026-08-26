@@ -461,11 +461,14 @@ class TrackInfo(BaseSchema):
     end_sec: int | None = None
     # SUGGESTED에서만 채워진다. 예: "잔잔하고 따뜻한 어쿠스틱"
     mood: str | None = None
+    # 정확한 곡을 검증하지 못했을 때 플랫폼에서 검색하도록 제공하는 키워드다.
+    search_keyword: str | None = None
 
 
 class PublishKit(BaseSchema):
+    title: str
     caption: str
-    hashtags: list[str]
+    hashtags: list[str] = Field(min_length=5, max_length=20)
     post_note: str | None = None
     # 포맷에 음원 정보가 없으면 null이다. 프론트는 이때 음원 카드를 숨긴다.
     track: TrackInfo | None = None

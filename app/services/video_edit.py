@@ -180,6 +180,7 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
             project = db.get(ShortsProject, output.shorts_project_id)
             assert project is not None
             project.publish_kit = {
+                "title": result.publishing.title,
                 "caption": result.publishing.caption,
                 "hashtags": result.publishing.hashtags,
                 "post_note": result.publishing.post_note,

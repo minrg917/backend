@@ -275,9 +275,19 @@ def test_editing_result_maps_nested_render(monkeypatch: pytest.MonkeyPatch) -> N
                 "cover_image_url": None,
             },
             "publishing": {
+                "title": "오늘의 행복분식",
                 "caption": "오늘의 메뉴",
-                "hashtags": ["#행복분식"],
-                "post_note": "플랫폼에서 음원을 추가하세요.",
+                "hashtags": ["#행복분식", "#분식", "#매장소개", "#동네맛집", "#숏폼"],
+                "track": {
+                    "mode": "SUGGESTED",
+                    "title": None,
+                    "artist": None,
+                    "start_sec": None,
+                    "end_sec": None,
+                    "mood": None,
+                    "search_keyword": "분식 릴스",
+                },
+                "post_note": "플랫폼에서 ‘분식 릴스’를 검색해 음원을 추가하세요.",
             },
         },
     )
@@ -287,4 +297,6 @@ def test_editing_result_maps_nested_render(monkeypatch: pytest.MonkeyPatch) -> N
     assert result.video_url == "http://renderer.internal/files/result.mp4"
     assert result.resolution == "1080x1920"
     assert result.publishing is not None
-    assert result.publishing.hashtags == ["#행복분식"]
+    assert result.publishing.title == "오늘의 행복분식"
+    assert len(result.publishing.hashtags) == 5
+    assert result.publishing.track["search_keyword"] == "분식 릴스"

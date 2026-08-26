@@ -241,7 +241,8 @@ def test_outputs_created_per_platform(
     platforms = {output["target_platform"] for output in body["outputs"]}
     assert platforms == {"INSTAGRAM", "YOUTUBE"}
     assert body["publish_kit"]["caption"]
-    assert body["publish_kit"]["hashtags"]
+    assert body["publish_kit"]["title"]
+    assert len(body["publish_kit"]["hashtags"]) >= 5
 
 
 def test_outputs_are_idempotent_per_platform(
@@ -274,6 +275,7 @@ def test_publish_kit_uses_only_real_store_data(
     ).json()["publish_kit"]
 
     assert kit["caption"] == STORE_BODY["name"]
+    assert kit["title"] == f"{STORE_BODY['name']}을 소개합니다"
     assert "#행복분식" in kit["hashtags"]
     assert "#분식" in kit["hashtags"]
 
@@ -487,8 +489,9 @@ def test_publish_kit_includes_track_key(
         headers=auth_headers,
     ).json()["publish_kit"]
 
-    assert "track" in kit
-    assert kit["track"] is None
+    assert kit["track"]["mode"] == "SUGGESTED"
+    assert kit["track"]["search_keyword"]
+    assert kit["track"]["start_sec"] is None
 
 
 def test_track_survives_get(
