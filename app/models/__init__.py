@@ -4,6 +4,7 @@ Alembic autogenerate가 테이블을 인식하려면 새 모델을 여기서 임
 """
 
 from app.models.format_favorite import FormatFavorite
+from app.models.push_token import PushPlatform, PushToken
 from app.models.shooting_task import COMPLETED_STATUSES, FootageType, ShootingTask, TaskStatus
 from app.models.shortform_session import SessionStatus, ShortformSession
 from app.models.shorts_project import PromotionPurpose, ShortsProject, ShortsStatus
@@ -20,6 +21,8 @@ from app.models.video_output import RenderStatus, VideoOutput
 
 __all__ = [
     "FormatFavorite",
+    "PushPlatform",
+    "PushToken",
     "COMPLETED_STATUSES",
     "FootageType",
     "PromotionPurpose",

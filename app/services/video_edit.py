@@ -87,6 +87,21 @@ def _build_footage_inputs(db: Session, project: ShortsProject) -> list[ai_client
     ]
 
 
+def _find_active_output(
+    db: Session, project: ShortsProject, target_platform: str
+) -> VideoOutput | None:
+    return db.scalar(
+        select(VideoOutput)
+        .where(
+            VideoOutput.shorts_project_id == project.id,
+            VideoOutput.target_platform == target_platform,
+            VideoOutput.render_status.in_((RenderStatus.PENDING, RenderStatus.PROCESSING)),
+        )
+        .order_by(VideoOutput.id.desc())
+        .limit(1)
+    )
+
+
 def start_edit(db: Session, project: ShortsProject, target_platform: str) -> VideoOutput:
     """편집을 시작한다 (API명세서 14.1).
 
@@ -96,7 +111,18 @@ def start_edit(db: Session, project: ShortsProject, target_platform: str) -> Vid
 
     검증 기준은 `task_status`가 아니라 **`footage_url` 존재 여부**다 — 8.2로 상태만
     `DONE`으로 바꿔도 촬영본이 없으면 편집할 재료가 없다.
+
+    **이미 진행 중인(`PENDING`/`PROCESSING`) 편집이 있으면 새로 걸지 않고 그걸
+    그대로 돌려준다**(2026-08-26, FE 리포트로 발견). 편집 화면(RenderScreen)이
+    재진입할 때마다 이 API를 다시 부르는데, 매번 새 렌더를 걸면 AI 쪽에 같은
+    프로젝트의 렌더가 중복으로 쌓이고 어느 게 "진짜" 결과인지도 불분명해진다.
+    이미 끝난(`COMPLETED`/`FAILED`) 편집을 다시 시작하는 건 재시도로 보고 그대로
+    새로 만든다.
     """
+    existing = _find_active_output(db, project, target_platform)
+    if existing is not None:
+        return sync_output(db, existing)
+
     _require_all_footage(db, project)
     store = db.get(Store, project.store_id)
     assert store is not None  # 프로젝트가 있으면 가게도 있다(FK)
