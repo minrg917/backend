@@ -5,8 +5,10 @@
 """
 
 from http import HTTPStatus
+from typing import Any
 
 from fastapi import APIRouter
+from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.common import MessageResponse
@@ -24,6 +26,20 @@ from app.services import shortform_session as session_service
 router = APIRouter(prefix="/shortform-sessions", tags=["shortform-sessions"])
 
 
+def _recommendation_response(db: Session, r: Any) -> RecommendationResponse:
+    return RecommendationResponse(
+        recommendation_id=r.recommendation_id,
+        project_title=r.project_title,
+        title=r.title,
+        concept=r.concept,
+        editing_template_id=r.editing_template_id,
+        editing_template_version=r.editing_template_version,
+        video_format_id=session_service.find_video_format_id(
+            db, r.editing_template_id, r.editing_template_version
+        ),
+    )
+
+
 @router.post("/{session_id}/turns", response_model=TurnResponse)
 def submit_turn(
     session_id: int, payload: TurnRequest, user: CurrentUser, db: DbSession
@@ -37,17 +53,7 @@ def submit_turn(
         assistant_message=result.assistant_message,
         project_state=result.project_state,
         options=[SessionOptionResponse(id=o.id, label=o.label) for o in result.options],
-        recommendations=[
-            RecommendationResponse(
-                recommendation_id=r.recommendation_id,
-                project_title=r.project_title,
-                title=r.title,
-                concept=r.concept,
-                editing_template_id=r.editing_template_id,
-                editing_template_version=r.editing_template_version,
-            )
-            for r in recommendations
-        ],
+        recommendations=[_recommendation_response(db, r) for r in recommendations],
     )
 
 
@@ -60,17 +66,7 @@ def get_next_recommendation(
     recommendations, shown_ids = session_service.get_next_recommendation(db, session)
     return NextRecommendationResponse(
         id=session.id,
-        recommendations=[
-            RecommendationResponse(
-                recommendation_id=r.recommendation_id,
-                project_title=r.project_title,
-                title=r.title,
-                concept=r.concept,
-                editing_template_id=r.editing_template_id,
-                editing_template_version=r.editing_template_version,
-            )
-            for r in recommendations
-        ],
+        recommendations=[_recommendation_response(db, r) for r in recommendations],
         shown_template_ids=shown_ids,
     )
 

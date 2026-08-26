@@ -44,6 +44,11 @@ class RecommendationResponse(BaseSchema):
     concept: str
     editing_template_id: str
     editing_template_version: int
+    # 2026-08-26 추가. editing_template_id/version으로 video_formats를 조회해
+    # 찾은 값 — 프론트가 5.2로 썸네일·촬영시간·난이도·얼굴노출을 채울 수 있게
+    # 한다. 아직 한 번도 채택된 적 없는 템플릿이면 매칭되는 행이 없어 null이다
+    # (지어내지 않는다 — 채택 시점에만 생기는 값이라 순수 조회로 그친다).
+    video_format_id: int | None
 
 
 class SessionCreateResponse(BaseSchema):
