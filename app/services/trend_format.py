@@ -8,8 +8,14 @@
 앱에서 썸네일도 못 만들고 재생도 안 된다 — 5.1 피드가 요구하는 "따라 만들 원본
 영상"과 성격이 다르다. 트렌드 클러스터가 그 원본을 갖고 있다.
 
-**중복 기준은 `trend_challenge_id`다.** `reference_url`이 아니다 — 챌린지의 대표
-영상이 교체되면 URL이 바뀌는데, URL 기준이면 같은 챌린지가 두 행이 된다.
+**챌린지 하나당 대표 행을 하나만 유지한다.** 같은 실제 챌린지가 R06 추천 경로(먼저
+`internal://` 자산 주소로 적재됨)와 트렌드 동기화 경로(실제 유튜브 URL을 가짐) 양쪽에서
+각각 행을 만드는 경우가 있다 — 이 둘을 별개로 두면 (a) `editing_template_id`+`version`에
+걸린 UNIQUE 제약을 두 행이 나눠 가지려다 커밋이 실패하거나, (b) 운 좋게 커밋되더라도
+실제 유튜브 URL은 한쪽 행에, 활성화(`is_active`)는 다른 쪽 행에 떨어져 화면엔 재생 안 되는
+`internal://` 카드가 활성 상태로 노출된다(2026-08-26 실서버에서 둘 다 실제로 겪음).
+그래서 매 동기화마다 "이 챌린지를 대표할 행"을 하나만 골라 그 행에만 전체 정보(제목,
+실제 URL, 템플릿 연결, 활성화 여부)를 채우고, 경합하는 다른 행은 은퇴시킨다.
 """
 
 from sqlalchemy import select, update
@@ -33,41 +39,59 @@ def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChal
             setattr(video_format, field, value)
 
 
-def _link_editing_template(
-    db: Session, video_format: VideoFormat, challenge: ai_client.TrendChallenge
-) -> None:
-    """승인된 챌린지의 편집 템플릿을 연결한다.
+def _select_representative_row(
+    db: Session, challenge: ai_client.TrendChallenge, reference_url: str
+) -> VideoFormat | None:
+    """이 챌린지를 대표할 기존 행을 찾는다. 우선순위대로 시도한다.
 
-    `editing_template_id`/`version`은 이 챌린지의 촬영가이드 템플릿이 AI 쪽에서
-    승인 완료됐을 때만 채워진다(2026-08-26 확인). 이 값이 채워져야 5.1에서 고른
-    포맷으로 실제 기획 생성(`get_shooting_guide`)이 가능해진다 — 그 전엔
-    `editing_template_id`가 없어 `NotImplementedError`로 막힌다.
-
-    **같은 (template_id, version) 쌍을 R06 추천이 만든 행이 이미 갖고 있을 수
-    있다** — 같은 실제 챌린지가 서로 다른 두 경로(트렌드 동기화 / R06 추천 수락)로
-    각각 행을 만들었기 때문이다. 이 쌍엔 UNIQUE 제약이 있어 트렌드 행에도 그대로
-    쓰면 커밋이 실패한다(2026-08-26 실서버에서 실제로 발생). 이미 다른 행이 그
-    쌍을 갖고 있으면, 트렌드 행엔 값을 넣지 않고 **그 다른 행을 대신 활성화**한다
-    — 실제로 프로젝트가 참조하는 건 그 행이기 때문이다.
+    1. 같은 (editing_template_id, version) — R06 추천이 먼저 적재해둔 행일 수 있다.
+       템플릿 연결이 이미 돼 있는 행이 있으면 그걸 우선한다(정보를 더 많이 갖고 있다).
+    2. 같은 trend_challenge_id — 이전 동기화가 만든 행.
+    3. 같은 reference_url — `reference_url`이 UNIQUE라 다른 경로로 이미 들어와 있을 수 있다.
     """
     template_id = challenge.editing_template_id
     version = challenge.editing_template_version
-    if template_id is None or version is None:
-        return
+    if template_id is not None and version is not None:
+        by_template = db.scalar(
+            select(VideoFormat).where(
+                VideoFormat.editing_template_id == template_id,
+                VideoFormat.editing_template_version == version,
+            )
+        )
+        if by_template is not None:
+            return by_template
 
+    by_challenge_id = db.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == challenge.id)
+    )
+    if by_challenge_id is not None:
+        return by_challenge_id
+
+    return db.scalar(select(VideoFormat).where(VideoFormat.reference_url == reference_url))
+
+
+def _retire_conflicting_rows(
+    db: Session, keep: VideoFormat, challenge: ai_client.TrendChallenge, reference_url: str
+) -> None:
+    """대표 행으로 안 뽑힌 다른 행이 같은 URL/challenge_id를 들고 있으면 비운다.
+
+    `reference_url`·`trend_challenge_id`엔 UNIQUE 제약이 없어도(또는 있어도), 대표
+    행에 실제 값을 쓰기 전에 경합하는 값을 먼저 비워야 나중에 값이 겹치지 않는다.
+    물리적으로 지우지 않고 비활성화 + 자기 자신을 가리키는 고유 주소로 바꿔
+    UNIQUE 제약을 피한다 — 즐겨찾기·프로젝트 참조가 걸려 있을 수 있어서다.
+    """
     conditions = [
-        VideoFormat.editing_template_id == template_id,
-        VideoFormat.editing_template_version == version,
+        (VideoFormat.reference_url == reference_url)
+        | (VideoFormat.trend_challenge_id == challenge.id)
     ]
-    if video_format.id is not None:
-        conditions.append(VideoFormat.id != video_format.id)
-    existing_owner = db.scalar(select(VideoFormat).where(*conditions))
-    if existing_owner is not None:
-        existing_owner.is_active = True
-        return
-
-    video_format.editing_template_id = template_id
-    video_format.editing_template_version = version
+    if keep.id is not None:
+        conditions.append(VideoFormat.id != keep.id)
+    conflicting = db.scalars(select(VideoFormat).where(*conditions)).all()
+    for row in conflicting:
+        row.trend_challenge_id = None
+        row.reference_url = f"internal://retired-trend-row/{row.id}"
+        row.guide_video_url = None
+        row.is_active = False
 
 
 def sync_trend_formats(db: Session) -> tuple[int, int, int]:
@@ -94,39 +118,14 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
             skipped += 1
             continue
 
-        video_format = db.scalar(
-            select(VideoFormat).where(VideoFormat.trend_challenge_id == challenge.id)
-        )
-        if video_format is None:
-            # 트렌드 연동 전에 같은 영상이 다른 경로로 들어와 있을 수 있다.
-            # `reference_url`이 UNIQUE라 그대로 새 행을 만들면 실패한다 — 붙여서 쓴다.
-            video_format = db.scalar(
-                select(VideoFormat).where(VideoFormat.reference_url == reference_url)
-            )
-
-        if video_format is None:
-            video_format = VideoFormat(
-                format_title=challenge.name,
-                reference_url=reference_url,
-                guide_video_url=challenge.guide_youtube_url,
-                source_platform="YOUTUBE",
-                trend_challenge_id=challenge.id,
-                trend_rank=challenge.rank,
-            )
-            _apply_ai_metadata(video_format, challenge)
-            _link_editing_template(db, video_format, challenge)
-            # 트렌드 인기 여부(challenge.active)가 아니라 "촬영가이드 템플릿이
-            # 실제로 있는가"로 활성화 여부를 정한다(2026-08-26 정정). 발굴은
-            # 됐지만 아직 승인 전인 챌린지는 트렌드로는 active여도 고르면
-            # 기획 생성이 막힌다 — 반대로 승인은 끝났지만 트렌드 순위에서
-            # 내려간 챌린지는 여전히 정상 작동한다. 그래서 판단 기준은
-            # "이 포맷을 지금 골라도 되는가"인 template 존재 여부여야 한다.
-            video_format.is_active = video_format.editing_template_id is not None
+        video_format = _select_representative_row(db, challenge, reference_url)
+        is_new = video_format is None
+        if is_new:
+            video_format = VideoFormat()
             db.add(video_format)
-            added += 1
-            continue
+        else:
+            _retire_conflicting_rows(db, video_format, challenge, reference_url)
 
-        # AI가 제공한 값은 매번 갱신하되, null은 사람이 채운 값을 지우지 않는다.
         video_format.format_title = challenge.name
         video_format.reference_url = reference_url
         video_format.guide_video_url = challenge.guide_youtube_url
@@ -134,9 +133,21 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
         _apply_ai_metadata(video_format, challenge)
-        _link_editing_template(db, video_format, challenge)
+        if (
+            challenge.editing_template_id is not None
+            and challenge.editing_template_version is not None
+        ):
+            video_format.editing_template_id = challenge.editing_template_id
+            video_format.editing_template_version = challenge.editing_template_version
+        # 트렌드 인기 여부(challenge.active)가 아니라 "촬영가이드 템플릿이 실제로
+        # 있는가"로 활성화 여부를 정한다(2026-08-26 정정) — 발굴은 됐지만 아직
+        # 승인 전인 챌린지는 트렌드로는 active여도 고르면 기획 생성이 막힌다.
         video_format.is_active = video_format.editing_template_id is not None
-        updated += 1
+
+        if is_new:
+            added += 1
+        else:
+            updated += 1
 
     # AI가 응답을 준 경우(연동 꺼짐이 아닌 경우)에만 마무리 비활성화를 한다 —
     # AI_SERVER_URL이 없어 challenges가 빈 목록일 때 트렌드 행을 전부 꺼버리면
