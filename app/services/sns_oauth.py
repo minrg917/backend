@@ -10,7 +10,7 @@ Clip·TikTok도 되지만, 그 둘은 성과 지표를 가져올 API 경로가 �
 
 from dataclasses import dataclass
 from http import HTTPStatus
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -76,7 +76,11 @@ class PlatformOAuth:
             # 사장님에게 재로그인을 요구해야 해서, 주기적 지표 수집이 끊긴다.
             params["access_type"] = "offline"
             params["prompt"] = "consent"
-        return f"{self.authorize_url}?{urlencode(params)}"
+        # urlencode 기본값(quote_plus)은 공백을 '+'로 인코딩하는데, Instagram의 OAuth
+        # 서버는 쿼리스트링에서 '+'를 공백으로 풀어주지 않아 스코프 두 개가
+        # "a+b"라는 하나의 잘못된 스코프로 합쳐져 "Invalid scope" 오류가 났다
+        # (2026-08-26 실제로 겪음). RFC 3986대로 '%20'을 쓰는 quote로 바꾼다.
+        return f"{self.authorize_url}?{urlencode(params, quote_via=quote)}"
 
 
 _PLATFORMS = {

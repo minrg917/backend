@@ -82,6 +82,26 @@ def test_authorize_returns_platform_url(client: TestClient, auth_headers: dict[s
     assert params["state"]
 
 
+def test_authorize_encodes_scope_spaces_as_percent20(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """스코프 구분 공백은 '+'가 아니라 '%20'으로 인코딩돼야 한다.
+
+    실제로 겪은 문제(2026-08-26): `urlencode`의 기본 인코딩(quote_plus)은 공백을
+    '+'로 바꾸는데, Instagram의 OAuth 서버는 쿼리스트링의 '+'를 공백으로 풀어주지
+    않는다. 그 결과 스코프 두 개가 "a+b"라는 하나의 잘못된 스코프 이름으로 합쳐져
+    "Invalid scope: instagram_business_basic+instagram_business_manage_insights"
+    오류가 났다. `parse_qs`로 파싱해서 검증하면 '+'도 공백으로 다시 풀려버려 이
+    버그를 못 잡으므로, 인코딩된 원본 문자열을 그대로 확인해야 한다.
+    """
+    url = client.get("/sns-connections/authorize?platform=INSTAGRAM", headers=auth_headers).json()[
+        "authorize_url"
+    ]
+
+    assert "instagram_business_basic+instagram_business_manage_insights" not in url
+    assert "instagram_business_basic%20instagram_business_manage_insights" in url
+
+
 def test_authorize_never_leaks_client_secret(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
