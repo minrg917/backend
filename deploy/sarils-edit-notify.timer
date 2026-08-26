@@ -1,0 +1,12 @@
+[Unit]
+Description=Check in-progress video edits every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10
+Persistent=true
+Unit=sarils-edit-notify.service
+
+[Install]
+WantedBy=timers.target
