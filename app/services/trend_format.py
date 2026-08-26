@@ -73,17 +73,30 @@ def _select_representative_row(
 def _retire_conflicting_rows(
     db: Session, keep: VideoFormat, challenge: ai_client.TrendChallenge, reference_url: str
 ) -> None:
-    """대표 행으로 안 뽑힌 다른 행이 같은 URL/challenge_id를 들고 있으면 비운다.
+    """대표 행으로 안 뽑힌 다른 행이 같은 URL/challenge_id/템플릿을 들고 있으면 비운다.
 
     `reference_url`·`trend_challenge_id`엔 UNIQUE 제약이 없어도(또는 있어도), 대표
     행에 실제 값을 쓰기 전에 경합하는 값을 먼저 비워야 나중에 값이 겹치지 않는다.
     물리적으로 지우지 않고 비활성화 + 자기 자신을 가리키는 고유 주소로 바꿔
     UNIQUE 제약을 피한다 — 즐겨찾기·프로젝트 참조가 걸려 있을 수 있어서다.
+
+    **같은 `editing_template_id`의 옛 버전 행도 여기서 잡는다.** R06 추천 수락이
+    만든 행은 `trend_challenge_id`가 없어서(트렌드 동기화를 거친 적이 없어서)
+    위 두 조건만으로는 안 걸리는데, AI가 같은 챌린지의 템플릿 버전을 올리면
+    (v2→v4) 대표 행 선정은 새 버전 쪽(예: v4)으로 넘어가면서 옛 버전 행은
+    그대로 활성 상태로 방치된다(2026-08-26 실서버에서 실제로 겪음 — v2 행이
+    `internal://` 주소를 가진 채 v4 행과 나란히 활성 상태였다). `editing_template_id`
+    자체는 지우지 않는다 — 이미 그 버전으로 만들어진 프로젝트가 있으면
+    `get_shooting_guide`가 여전히 그 값을 참조하기 때문이다.
     """
     conditions = [
         (VideoFormat.reference_url == reference_url)
         | (VideoFormat.trend_challenge_id == challenge.id)
     ]
+    if challenge.editing_template_id is not None:
+        conditions = [
+            conditions[0] | (VideoFormat.editing_template_id == challenge.editing_template_id)
+        ]
     if keep.id is not None:
         conditions.append(VideoFormat.id != keep.id)
     conflicting = db.scalars(select(VideoFormat).where(*conditions)).all()
@@ -123,8 +136,11 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
         if is_new:
             video_format = VideoFormat()
             db.add(video_format)
-        else:
-            _retire_conflicting_rows(db, video_format, challenge, reference_url)
+
+        # 대표 행이 새로 만들어졌든 기존 행이든, 다른 행이 같은 URL/challenge_id/
+        # 템플릿(다른 버전 포함)을 들고 있을 수 있다 — 새 행이라고 경합이 없다는
+        # 보장은 없다(예: 옛 템플릿 버전 행이 대표로 뽑히지 않고 남아있는 경우).
+        _retire_conflicting_rows(db, video_format, challenge, reference_url)
 
         video_format.format_title = challenge.name
         video_format.reference_url = reference_url
