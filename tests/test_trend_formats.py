@@ -125,14 +125,18 @@ def test_sync_links_editing_template_when_approved(
     assert linked.is_active is True
 
 
-def test_sync_activates_existing_row_instead_of_duplicating_template_pair(
+def test_sync_merges_into_existing_template_row_with_real_url(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """R06 추천이 이미 만든 행과 같은 (template_id, version)이면 그 행을 대신 켠다.
+    """R06 추천이 이미 만든 행과 같은 (template_id, version)이면 그 행을 대표로 삼는다.
 
-    실서버에서 실제로 겪은 문제(2026-08-26): 같은 챌린지가 R06 경로와 트렌드
-    경로로 각각 행을 만들었는데, 트렌드 동기화가 같은 (template_id, version)
-    쌍을 새 행에도 쓰려다가 UNIQUE 제약 위반으로 커밋 전체가 실패했다.
+    실서버에서 실제로 겪은 문제(2026-08-26, 두 단계):
+    1) 같은 챌린지가 R06 경로와 트렌드 경로로 각각 행을 만들었는데, 트렌드 동기화가
+       같은 (template_id, version) 쌍을 새 행에도 쓰려다가 UNIQUE 제약 위반으로
+       커밋 전체가 실패했다.
+    2) 그걸 "기존 행을 대신 켠다"로 고쳤더니 이번엔 실제 유튜브 URL이 반영되지 않은
+       채로(R06 행은 `internal://` 자산 주소를 그대로 가진 채) 활성화만 돼서, 화면엔
+       재생 안 되는 카드가 떴다. 대표 행 하나에 실제 값을 전부 합쳐 써야 한다.
     """
     r06_row = VideoFormat(
         format_title="R06 추천으로 만들어진 행",
@@ -156,18 +160,19 @@ def test_sync_activates_existing_row_instead_of_duplicating_template_pair(
     _stub_ai(monkeypatch, payload)
 
     added, updated, skipped = sync_trend_formats(db_session)
-    assert (added, updated, skipped) == (1, 0, 0)
+    assert (added, updated, skipped) == (0, 1, 0)
 
     db_session.refresh(r06_row)
     assert r06_row.is_active is True
+    assert r06_row.trend_challenge_id == "jujutsu_transition"
+    # R06 행이 대표 행이 됐으니, 실제 유튜브 URL이 그 위에 그대로 반영돼야 한다 —
+    # 예전엔 이 값이 갱신되지 않아 활성 카드가 재생 안 되는 internal:// 를 가리켰다.
+    assert r06_row.reference_url == "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=abc"
+    assert r06_row.guide_video_url == "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=abc"
 
-    trend_row = db_session.scalar(
-        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
-    )
-    assert trend_row is not None
-    # 트렌드 행 쪽엔 값을 넣지 않는다 — 실제로 쓰이는 건 R06 행이다.
-    assert trend_row.editing_template_id is None
-    assert trend_row.is_active is False
+    # 같은 챌린지를 가리키는 다른 행은 남아 있지 않다 — 대표 행 하나로 합쳐졌다.
+    all_rows = list(db_session.scalars(select(VideoFormat)))
+    assert len(all_rows) == 1
 
 
 def test_sync_leaves_editing_template_unlinked_when_not_yet_approved(
