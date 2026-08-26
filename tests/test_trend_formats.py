@@ -87,7 +87,9 @@ def test_sync_loads_trend_cluster(db_session: Session, monkeypatch: pytest.Monke
     assert first.guide_video_url == "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=abc"
     assert first.source_platform == "YOUTUBE"
     assert first.trend_challenge_id == "jujutsu_transition"
-    assert first.is_active is True
+    # 아직 컷 분해 템플릿이 없는 챌린지라 비활성이다 — 트렌드 자체는 인기여도
+    # 골랐을 때 기획 생성이 안 되면 피드에 노출하면 안 된다.
+    assert first.is_active is False
     assert (
         first.format_type,
         first.expected_duration_sec,
@@ -119,6 +121,8 @@ def test_sync_links_editing_template_when_approved(
     assert linked is not None
     assert linked.editing_template_id == "gt_jujutsu_transition"
     assert linked.editing_template_version == 4
+    # 템플릿이 있으니 트렌드 인기 여부와 무관하게 활성화된다.
+    assert linked.is_active is True
 
 
 def test_sync_leaves_editing_template_unlinked_when_not_yet_approved(
@@ -135,30 +139,55 @@ def test_sync_leaves_editing_template_unlinked_when_not_yet_approved(
     assert linked is not None
     assert linked.editing_template_id is None
     assert linked.editing_template_version is None
+    # 발굴은 됐지만 아직 승인 전이라 비활성 — 골라도 기획 생성이 막히는 카드를
+    # 피드에 보여주면 안 된다.
+    assert linked.is_active is False
 
 
-def test_sync_deactivates_format_when_ai_marks_challenge_inactive(
+def test_sync_activation_follows_template_not_ai_trend_flag(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AI가 트렌드에서 내린 챌린지는 우리 피드에서도 바로 빠져야 한다."""
-    _stub_ai(monkeypatch, TRENDCLUSTER)
-    sync_trend_formats(db_session)
+    """활성화 기준은 AI의 트렌드 인기 여부(`active`)가 아니라 템플릿 존재 여부다.
 
-    deactivated = {
-        **TRENDCLUSTER,
+    실측 사례(2026-08-26): 새로 발굴된 챌린지는 트렌드로는 `active: true`인데
+    아직 컷 분해 승인 전이고, 반대로 예전에 승인된 챌린지는 트렌드 순위에서는
+    `active: false`로 빠졌는데도 템플릿은 여전히 유효했다. `active` 값만 보고
+    켜고 끄면 정확히 거꾸로 된 결과가 나온다.
+    """
+    payload = {
         "results": [
-            {**TRENDCLUSTER["results"][0], "active": False},
-            *TRENDCLUSTER["results"][1:],
-        ],
+            {
+                # 트렌드로는 인기 있음(active=true)이지만 아직 템플릿 없음.
+                "id": "trending_not_approved",
+                "rank": 1,
+                "name": "새로 뜨는 챌린지",
+                "representative_youtube_url": "https://youtu.be/trending",
+                "active": True,
+            },
+            {
+                # 트렌드 순위에서는 빠졌지만(active=false) 템플릿은 있음.
+                "id": "old_but_approved",
+                "rank": 99,
+                "name": "예전 챌린지",
+                "representative_youtube_url": "https://youtu.be/old",
+                "active": False,
+                "editing_template_id": "gt_old_but_approved",
+                "editing_template_version": 4,
+            },
+        ]
     }
-    _stub_ai(monkeypatch, deactivated)
+    _stub_ai(monkeypatch, payload)
+
     sync_trend_formats(db_session)
 
-    row = db_session.scalar(
-        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
+    trending = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "trending_not_approved")
     )
-    assert row is not None
-    assert row.is_active is False
+    old = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "old_but_approved")
+    )
+    assert trending is not None and trending.is_active is False
+    assert old is not None and old.is_active is True
 
 
 def test_list_trend_challenges_requests_inactive_too(monkeypatch: pytest.MonkeyPatch) -> None:
