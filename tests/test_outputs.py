@@ -241,7 +241,8 @@ def test_outputs_created_per_platform(
     platforms = {output["target_platform"] for output in body["outputs"]}
     assert platforms == {"INSTAGRAM", "YOUTUBE"}
     assert body["publish_kit"]["caption"]
-    assert body["publish_kit"]["hashtags"]
+    assert body["publish_kit"]["title"]
+    assert len(body["publish_kit"]["hashtags"]) >= 5
 
 
 def test_outputs_are_idempotent_per_platform(
@@ -274,6 +275,7 @@ def test_publish_kit_uses_only_real_store_data(
     ).json()["publish_kit"]
 
     assert kit["caption"] == STORE_BODY["name"]
+    assert kit["title"] == f"{STORE_BODY['name']}을 소개합니다"
     assert "#행복분식" in kit["hashtags"]
     assert "#분식" in kit["hashtags"]
 
@@ -473,11 +475,10 @@ def test_store_shorts_requires_authentication(client: TestClient, store_id: int)
 def test_publish_kit_includes_track_key(
     client: TestClient, auth_headers: dict[str, str], project_id: int
 ) -> None:
-    """음원 가이드 자리는 항상 응답에 있어야 한다.
+    """음원 가이드는 정확한 곡을 못 찾아도 검색 키워드로 항상 채워진다.
 
-    값의 출처(포맷 고정 / AI 생성)는 아직 정해지지 않아 `null`이지만, **키가 빠지면
-    프론트가 키 존재 여부로 분기하게 된다.** 값이 채워지는 시점에 프론트를 다시
-    고치지 않도록 계약을 먼저 고정한다.
+    `start_sec`/`end_sec`은 AI팀이 정확한 초 단위를 못 준다고 확인해(2026-08-26)
+    항상 `null`이다 — 필드 자체는 지우지 않는다.
     """
     _edited_project(client, auth_headers, project_id)
 
@@ -487,8 +488,9 @@ def test_publish_kit_includes_track_key(
         headers=auth_headers,
     ).json()["publish_kit"]
 
-    assert "track" in kit
-    assert kit["track"] is None
+    assert kit["track"]["mode"] == "SUGGESTED"
+    assert kit["track"]["search_keyword"]
+    assert kit["track"]["start_sec"] is None
 
 
 def test_track_survives_get(

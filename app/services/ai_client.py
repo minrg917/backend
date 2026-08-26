@@ -447,6 +447,7 @@ class PublishKit:
     `generate_publish_kit()` 독스트링 참고.
     """
 
+    title: str
     caption: str
     hashtags: list[str]
     post_note: str | None = None
@@ -601,6 +602,7 @@ def get_editing_run_result(run_id: str) -> EditingRunResult:
     publishing = None
     if publishing_data is not None:
         publishing = PublishKit(
+            title=str(publishing_data["title"]),
             caption=str(publishing_data["caption"]),
             hashtags=list(publishing_data.get("hashtags") or []),
             post_note=publishing_data.get("post_note"),
@@ -684,8 +686,14 @@ def _placeholder_publish_kit(store: Store) -> PublishKit:
     hashtags = [f"#{store.name.replace(' ', '')}"]
     if store.category:
         hashtags.append(f"#{store.category.replace(' ', '')}")
+    for fallback in ("#매장소개", "#가게소개", "#동네맛집", "#숏폼", "#릴스"):
+        if len(hashtags) >= 5:
+            break
+        if fallback not in hashtags:
+            hashtags.append(fallback)
 
     return PublishKit(
+        title=f"{store.name}을 소개합니다",
         caption=f"{store.name}",
         hashtags=hashtags,
         post_note="AI 연동 전 임시 게시자료입니다. 캡션을 직접 수정해주세요.",
