@@ -31,6 +31,8 @@ jobs:
             .venv/bin/poetry install --without dev
             sudo install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-edit-notify.service /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-edit-notify.timer /etc/systemd/system/
             sudo systemctl daemon-reload
             # sarils-api를 먼저 재시작해 마이그레이션(alembic upgrade head, api의
             # ExecStartPre)이 끝나게 한 뒤 트렌드 동기화 타이머를 켠다. 순서가
@@ -44,3 +46,5 @@ jobs:
             # 부팅 시 자동시작만 보장하고, restart로 새 스케줄을 확실히 반영한다.
             sudo systemctl enable sarils-trend-sync.timer
             sudo systemctl restart sarils-trend-sync.timer
+            sudo systemctl enable sarils-edit-notify.timer
+            sudo systemctl restart sarils-edit-notify.timer
