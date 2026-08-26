@@ -157,9 +157,7 @@ def _ensure_publish_kit_contract(db: Session, project: ShortsProject) -> None:
                 "search_keyword": keyword,
             }
         )
-        kit["post_note"] = (
-            f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
-        )
+        kit["post_note"] = f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
     kit["track"] = track
     if kit != project.publish_kit:
         project.publish_kit = kit
