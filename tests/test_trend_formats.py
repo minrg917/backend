@@ -369,6 +369,70 @@ def test_sync_does_not_erase_curated_metadata_when_ai_omits_it(
     assert existing.requires_face is False
 
 
+def test_sync_deactivates_rows_dropped_from_ai_list(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI 목록에서 완전히 빠진 챌린지는 (루프가 안 건드려도) 비활성화된다.
+
+    실서버에서 실제로 겪음(2026-08-26): AI 응답이 48건에서 3건으로 줄었는데,
+    빠진 45건의 예전 is_active=true가 그대로 남아 있었다. 두 챌린지 모두 처음엔
+    승인된 템플릿이 있어 정상적으로 활성화되지만, 그중 하나가 다음 목록에서
+    완전히 사라지면 루프가 그 행을 아예 안 건드리므로 마무리 반영이 필요하다.
+    """
+    payload = {
+        "results": [
+            {
+                **TRENDCLUSTER["results"][0],
+                "editing_template_id": "gt_jujutsu_transition",
+                "editing_template_version": 4,
+            },
+            {
+                **TRENDCLUSTER["results"][1],
+                "editing_template_id": "gt_cafe_recommendation",
+                "editing_template_version": 2,
+            },
+        ]
+    }
+    _stub_ai(monkeypatch, payload)
+    sync_trend_formats(db_session)
+    assert {
+        f.trend_challenge_id
+        for f in db_session.scalars(select(VideoFormat).where(VideoFormat.is_active.is_(True)))
+    } == {"jujutsu_transition", "cafe_recommendation_reels"}
+
+    # 다음 동기화에서 AI가 jujutsu_transition만 준다 — cafe_recommendation_reels는
+    # 목록에서 완전히 빠졌다(루프가 그 행을 아예 안 건드린다).
+    narrowed = {"results": [payload["results"][0]]}
+    _stub_ai(monkeypatch, narrowed)
+    sync_trend_formats(db_session)
+
+    remaining_active_ids = {
+        f.trend_challenge_id
+        for f in db_session.scalars(select(VideoFormat).where(VideoFormat.is_active.is_(True)))
+    }
+    assert remaining_active_ids == {"jujutsu_transition"}
+
+
+def test_sync_does_not_touch_existing_rows_when_ai_disabled(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI_SERVER_URL이 없어 목록이 비어도 기존 트렌드 행을 통째로 끄면 안 된다."""
+    existing = VideoFormat(
+        format_title="기존 트렌드 포맷",
+        reference_url="https://youtu.be/existing2",
+        trend_challenge_id="existing2",
+        is_active=True,
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "")
+    sync_trend_formats(db_session)
+
+    db_session.refresh(existing)
+    assert existing.is_active is True
+
+
 def test_trending_sort_uses_trend_rank(db_session: Session) -> None:
     """`sort=trending`이 트렌드 순위를 따르고, 순위 없는 포맷은 뒤로 간다."""
     from app.schemas.video_format import FormatSort
