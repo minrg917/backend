@@ -76,24 +76,28 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
                 source_platform="YOUTUBE",
                 trend_challenge_id=challenge.id,
                 trend_rank=challenge.rank,
-                is_active=challenge.active,
             )
             _apply_ai_metadata(video_format, challenge)
+            # 트렌드 인기 여부(challenge.active)가 아니라 "촬영가이드 템플릿이
+            # 실제로 있는가"로 활성화 여부를 정한다(2026-08-26 정정). 발굴은
+            # 됐지만 아직 승인 전인 챌린지는 트렌드로는 active여도 고르면
+            # 기획 생성이 막힌다 — 반대로 승인은 끝났지만 트렌드 순위에서
+            # 내려간 챌린지는 여전히 정상 작동한다. 그래서 판단 기준은
+            # "이 포맷을 지금 골라도 되는가"인 template 존재 여부여야 한다.
+            video_format.is_active = video_format.editing_template_id is not None
             db.add(video_format)
             added += 1
             continue
 
         # AI가 제공한 값은 매번 갱신하되, null은 사람이 채운 값을 지우지 않는다.
-        # is_active는 예외 — AI가 트렌드에서 내린 챌린지는 우리 피드에서도 바로
-        # 빠져야 하므로, null-보존 규칙과 무관하게 항상 그대로 반영한다.
         video_format.format_title = challenge.name
         video_format.reference_url = reference_url
         video_format.guide_video_url = challenge.guide_youtube_url
         video_format.source_platform = "YOUTUBE"
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
-        video_format.is_active = challenge.active
         _apply_ai_metadata(video_format, challenge)
+        video_format.is_active = video_format.editing_template_id is not None
         updated += 1
 
     db.commit()
