@@ -175,6 +175,56 @@ def test_sync_merges_into_existing_template_row_with_real_url(
     assert len(all_rows) == 1
 
 
+def test_sync_retires_stale_template_version_left_active_from_before(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """같은 챌린지의 옛 템플릿 버전 행이 활성 상태로 남아있으면 은퇴시킨다.
+
+    실서버에서 실제로 겪은 문제(2026-08-26): R06 추천 수락이 v2 시절에 만든 행은
+    `trend_challenge_id`가 없어서 트렌드 동기화 기준으로는 "이 챌린지와 무관한
+    행"처럼 보인다. AI가 나중에 같은 챌린지의 템플릿을 v4로 새로 승인하면 대표
+    행 선정은 v4 쪽으로 넘어가는데, v2 행은 어떤 조건에도 안 걸려 활성 상태로
+    그대로 남아 재생 안 되는 카드가 계속 노출됐다.
+    """
+    stale_v2_row = VideoFormat(
+        format_title="예전 v2로 만들어진 행",
+        reference_url="internal://editing-template/gt_jujutsu_transition/v2",
+        editing_template_id="gt_jujutsu_transition",
+        editing_template_version=2,
+        is_active=True,
+    )
+    db_session.add(stale_v2_row)
+    db_session.commit()
+
+    payload = {
+        "results": [
+            {
+                **TRENDCLUSTER["results"][0],
+                "editing_template_id": "gt_jujutsu_transition",
+                "editing_template_version": 4,
+            }
+        ]
+    }
+    _stub_ai(monkeypatch, payload)
+
+    sync_trend_formats(db_session)
+
+    db_session.refresh(stale_v2_row)
+    assert stale_v2_row.is_active is False
+    # editing_template_id/version은 남겨둔다 — 이미 이 버전으로 만들어진 프로젝트가
+    # 있으면 get_shooting_guide가 여전히 이 값을 참조하기 때문이다.
+    assert stale_v2_row.editing_template_id == "gt_jujutsu_transition"
+    assert stale_v2_row.editing_template_version == 2
+
+    representative = db_session.scalar(
+        select(VideoFormat).where(VideoFormat.trend_challenge_id == "jujutsu_transition")
+    )
+    assert representative is not None
+    assert representative.id != stale_v2_row.id
+    assert representative.editing_template_version == 4
+    assert representative.is_active is True
+
+
 def test_sync_leaves_editing_template_unlinked_when_not_yet_approved(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
