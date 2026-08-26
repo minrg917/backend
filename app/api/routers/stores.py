@@ -101,7 +101,11 @@ def create_store(
     """
     store = store_service.create_store(db, user, payload)
 
-    place_id = menu_crawl_service.kakao_place_id(store)
+    # 2.1 응답의 kakao_place_id를 그대로 돌려받은 게 있으면 그걸 우선한다 —
+    # 사장님이 등록 시 external_channel_url을 인스타그램 등 다른 링크로 바꾸면
+    # (2026-08-26 실제 사례) URL 파싱만으로는 카카오 ID를 놓친다. 안 보내면
+    # 기존처럼 external_channel_url에서 파싱을 시도한다(구버전 클라이언트 대응).
+    place_id = payload.kakao_place_id or menu_crawl_service.kakao_place_id(store)
     if place_id:
         background_tasks.add_task(
             menu_crawl_service.enrich_menu_from_kakao, store.id, place_id, SessionLocal

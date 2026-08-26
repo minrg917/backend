@@ -32,6 +32,7 @@ def _result(**overrides: Any) -> StoreSearchResult:
         "source": SearchSource.NAVER,
         "name": "행복분식 강남점",
         "address": "서울 강남구 테헤란로 1길 10",
+        "jibun_address": None,
         "phone": None,
         "latitude": None,
         "longitude": None,
@@ -50,7 +51,12 @@ def test_merges_same_place_from_two_sources() -> None:
     merged = merge_duplicates(
         [
             _result(source=SearchSource.NAVER, phone="02-1234-5678"),
-            _result(source=SearchSource.KAKAO, category="분식", distance_m=120),
+            _result(
+                source=SearchSource.KAKAO,
+                category="분식",
+                distance_m=120,
+                jibun_address="서울 강남구 역삼동 800-1",
+            ),
         ]
     )
 
@@ -60,6 +66,7 @@ def test_merges_same_place_from_two_sources() -> None:
     assert only.phone == "02-1234-5678"  # NAVER가 가진 값
     assert only.category == "분식"  # KAKAO에서 채워온 값
     assert only.distance_m == 120
+    assert only.jibun_address == "서울 강남구 역삼동 800-1"  # KAKAO에서 채워온 값
 
 
 def test_merges_by_coordinates_when_address_notation_differs() -> None:
@@ -239,6 +246,56 @@ def test_create_store_requires_authentication(client: TestClient) -> None:
     assert response.status_code == 401
 
 
+def test_create_store_prefers_payload_kakao_place_id_over_url_parsing(
+    client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`external_channel_url`이 카카오 링크가 아니어도 kakao_place_id로 대표메뉴 자동수집이 걸린다.
+
+    실제로 겪은 문제(2026-08-26): 사장님들이 등록 시 `external_channel_url`을
+    인스타그램 등 다른 링크로 바꾸는 경우가 많아, URL 파싱만으로는 검색 단계에서
+    이미 확보한 카카오 ID를 놓친다.
+    """
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.api.routers.stores.menu_crawl_service.enrich_menu_from_kakao",
+        lambda store_id, place_id, session_factory: captured.update(
+            store_id=store_id, place_id=place_id
+        ),
+    )
+
+    response = _create_store(
+        client,
+        auth_headers,
+        external_channel_url="https://instagram.com/happy_bunsik",
+        kakao_place_id="27557389",
+    )
+
+    assert response.status_code == 201
+    assert captured == {"store_id": response.json()["id"], "place_id": "27557389"}
+
+
+def test_create_store_falls_back_to_url_when_kakao_place_id_missing(
+    client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """kakao_place_id를 안 보내면 기존처럼 external_channel_url에서 파싱한다(구버전 대응)."""
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.api.routers.stores.menu_crawl_service.enrich_menu_from_kakao",
+        lambda store_id, place_id, session_factory: captured.update(
+            store_id=store_id, place_id=place_id
+        ),
+    )
+
+    response = _create_store(
+        client,
+        auth_headers,
+        external_channel_url="https://place.map.kakao.com/98765",
+    )
+
+    assert response.status_code == 201
+    assert captured == {"store_id": response.json()["id"], "place_id": "98765"}
+
+
 # ---------------------------------------------------------------- 2.3 가져오기 진행상태
 
 
@@ -340,6 +397,26 @@ def test_naver_missing_coordinates_are_none() -> None:
     assert parsed.distance_m is None
 
 
+def test_naver_keeps_jibun_address_separate_from_road_address() -> None:
+    """NAVER는 지번(address)·도로명(roadAddress)을 둘 다 준다 — 지번을 버리면 안 된다.
+
+    실제로 겪은 문제(2026-08-26, FE 리포트): `address`가 `roadAddress`로 덮여
+    화면에 지번 주소를 낼 방법이 없었다.
+    """
+    from app.services.store_search import _parse_naver
+
+    parsed = _parse_naver(
+        {
+            "title": "스타벅스 한국프레스센터점",
+            "address": "서울특별시 중구 태평로1가 25",
+            "roadAddress": "서울특별시 중구 세종대로 124 (태평로1가)",
+        }
+    )
+
+    assert parsed.address == "서울특별시 중구 세종대로 124 (태평로1가)"
+    assert parsed.jibun_address == "서울특별시 중구 태평로1가 25"
+
+
 def test_kakao_document_is_parsed_into_result() -> None:
     """Kakao는 x=경도, y=위도이며 place_url이 곧 external_channel_url이다."""
     from app.services.store_search import _parse_kakao
@@ -355,15 +432,18 @@ def test_kakao_document_is_parsed_into_result() -> None:
             "category_group_name": "음식점",
             "distance": "120",
             "place_url": "https://place.map.kakao.com/98765",
+            "id": "98765",
         }
     )
 
     assert parsed.source is SearchSource.KAKAO
     assert parsed.address == "서울 강남구 테헤란로 1길 10"  # 도로명주소를 우선한다
+    assert parsed.jibun_address == "서울 강남구 역삼동 800-1"
     assert parsed.longitude == Decimal("127.0312345")
     assert parsed.latitude == Decimal("37.4995678")
     assert parsed.distance_m == 120
     assert parsed.external_channel_url == "https://place.map.kakao.com/98765"
+    assert parsed.kakao_place_id == "98765"
 
 
 def test_coordinates_are_serialized_as_numbers(

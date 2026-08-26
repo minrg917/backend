@@ -72,6 +72,7 @@ def _parse_naver(item: dict) -> StoreSearchResult:
         name=_strip_html(item.get("title", "")),
         # 도로명주소가 있으면 그쪽이 더 정확하다
         address=item.get("roadAddress") or item.get("address") or None,
+        jibun_address=item.get("address") or None,
         phone=item.get("telephone") or None,
         latitude=_naver_coord(item.get("mapy")),
         longitude=_naver_coord(item.get("mapx")),
@@ -88,6 +89,7 @@ def _parse_kakao(doc: dict) -> StoreSearchResult:
         source=SearchSource.KAKAO,
         name=doc.get("place_name", ""),
         address=doc.get("road_address_name") or doc.get("address_name") or None,
+        jibun_address=doc.get("address_name") or None,
         phone=doc.get("phone") or None,
         latitude=_to_decimal(doc.get("y")),
         longitude=_to_decimal(doc.get("x")),
@@ -95,6 +97,7 @@ def _parse_kakao(doc: dict) -> StoreSearchResult:
         # 기준 좌표(x,y)를 넘긴 경우에만 채워져서 온다.
         distance_m=int(distance) if distance else None,
         external_channel_url=doc.get("place_url") or None,
+        kakao_place_id=doc.get("id") or None,
     )
 
 
@@ -199,7 +202,16 @@ def _merge_into(base: StoreSearchResult, other: StoreSearchResult) -> None:
 
     `source`는 base 것을 유지한다 — 어느 출처에서 먼저 찾았는지를 그대로 보여준다.
     """
-    for field in ("address", "phone", "latitude", "longitude", "category", "distance_m"):
+    for field in (
+        "address",
+        "jibun_address",
+        "phone",
+        "latitude",
+        "longitude",
+        "category",
+        "distance_m",
+        "kakao_place_id",
+    ):
         if getattr(base, field) is None and getattr(other, field) is not None:
             setattr(base, field, getattr(other, field))
     if not base.external_channel_url and other.external_channel_url:

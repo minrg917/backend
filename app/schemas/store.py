@@ -29,7 +29,11 @@ class ImportItemStatus(StrEnum):
 class StoreSearchResult(BaseSchema):
     source: SearchSource
     name: str
+    # 도로명주소 우선. 둘 다 오면 도로명을 쓴다 — 지번은 jibun_address에 따로 담는다.
     address: str | None = None
+    # 지번주소. NAVER/Kakao 둘 다 도로명과 별개로 항상 이 값을 함께 준다
+    # (2026-08-26 FE 리포트로 발견 — 기존엔 도로명만 취하고 이 값을 버리고 있었다).
+    jibun_address: str | None = None
     phone: str | None = None
     latitude: Coordinate | None = None
     longitude: Coordinate | None = None
@@ -38,6 +42,12 @@ class StoreSearchResult(BaseSchema):
     # 키를 빼지 않고 null로 두는 건 프론트가 키 존재 여부로 분기하지 않게 하기 위함이다.
     distance_m: int | None = None
     external_channel_url: str | None = None
+    # 카카오 검색으로 잡힌 후보에만 채워진다. 화면에 보여줄 값이 아니라, 2.2
+    # 등록 시 그대로 돌려보내면 대표메뉴 자동수집(내부 기능)에 쓰인다.
+    # `external_channel_url`과 별개로 두는 이유: 사장님이 등록 시 그 필드를
+    # 인스타그램 등 다른 링크로 바꿀 수 있어(2026-08-26 실제 사례), URL에서
+    # 다시 파싱하는 방식으로는 이 값을 놓칠 수 있다.
+    kakao_place_id: str | None = None
 
 
 class StoreSearchResponse(BaseSchema):
@@ -57,6 +67,9 @@ class StoreCreateRequest(BaseSchema):
     # 검색(2.1) 결과로 등록할 때 좌표를 그대로 넘길 수 있게 받는다. 상권분석에 필요하다.
     latitude: Decimal | None = None
     longitude: Decimal | None = None
+    # 2.1 응답의 같은 필드를 그대로 돌려보내면 대표메뉴 자동수집에 쓰인다. 선택값이며
+    # 저장되지 않는다 — 없으면 external_channel_url에서 파싱을 시도한다(폴백).
+    kakao_place_id: str | None = None
 
     @model_validator(mode="after")
     def check_address_or_channel(self) -> "StoreCreateRequest":
