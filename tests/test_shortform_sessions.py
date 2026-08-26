@@ -109,11 +109,33 @@ def test_turn_moves_straight_to_recommend(
             "concept",
             "editing_template_id",
             "editing_template_version",
+            "video_format_id",
         }
     # 3장이 서로 다른 템플릿이어야 한다 — 같은 카드가 중복으로 뜨면 안 된다.
     template_ids = {r["editing_template_id"] for r in body["recommendations"]}
     assert len(template_ids) == 3
     assert body["project_state"]["ready_for_confirmation"] is True
+    # placeholder는 매번 새 editing_template_id를 만들어내므로, 아직 한 번도
+    # 채택된 적 없어 매칭되는 video_formats 행이 없다 — 지어내지 않고 null.
+    assert all(r["video_format_id"] is None for r in body["recommendations"])
+
+
+def test_find_video_format_id_returns_existing_match(db_session: Session) -> None:
+    """이미 한 번 채택돼 video_formats에 적재된 템플릿이면 그 id를 그대로 준다."""
+    from app.services.shortform_session import find_video_format_id
+
+    video_format = VideoFormat(
+        format_title="추천 포맷",
+        reference_url="internal://editing-template/gt_test/v1",
+        editing_template_id="gt_test",
+        editing_template_version=1,
+    )
+    db_session.add(video_format)
+    db_session.commit()
+
+    assert find_video_format_id(db_session, "gt_test", 1) == video_format.id
+    assert find_video_format_id(db_session, "gt_test", 2) is None
+    assert find_video_format_id(db_session, "gt_missing", 1) is None
 
 
 def test_turn_uses_representative_menu_as_subject(
