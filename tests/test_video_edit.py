@@ -5,10 +5,12 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.shooting_task import ShootingTask
 from app.models.video_format import VideoFormat
+from app.models.video_output import VideoOutput
 
 MP4_BYTES = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
 
@@ -156,6 +158,25 @@ def test_edit_starts_when_all_footage_uploaded(
     body = response.json()
     assert set(body) == {"video_output_id", "render_status"}
     assert body["render_status"] == "PENDING"
+
+
+def test_edit_reentry_does_not_duplicate_in_progress_render(
+    client: TestClient, auth_headers: dict[str, str], project_id: int, db_session: Session
+) -> None:
+    """편집 화면 재진입으로 14.1이 다시 불려도 진행 중인 편집을 그대로 돌려준다.
+
+    실제로 겪은 문제(2026-08-26, FE 리포트): RenderScreen이 마운트될 때마다
+    14.1을 다시 호출하는데, 기존 코드는 매번 새 VideoOutput을 만들고 AI에
+    새 렌더를 또 걸었다. 그러면 같은 프로젝트에 렌더가 중복으로 쌓인다.
+    """
+    _upload_all(client, auth_headers, project_id)
+
+    first = _start_edit(client, auth_headers, project_id).json()
+    second = _start_edit(client, auth_headers, project_id).json()
+
+    assert second["video_output_id"] == first["video_output_id"]
+    rows = list(db_session.scalars(select(VideoOutput)))
+    assert len(rows) == 1
 
 
 def test_edit_blocked_without_plan(client: TestClient, auth_headers: dict[str, str]) -> None:

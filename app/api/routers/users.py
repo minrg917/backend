@@ -10,7 +10,10 @@ from app.schemas.auth import (
     WithdrawRequest,
     WithdrawResponse,
 )
+from app.schemas.common import MessageResponse
+from app.schemas.push_token import PushTokenRegisterRequest
 from app.services import auth as auth_service
+from app.services import push_token as push_token_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -51,3 +54,16 @@ def update_profile(
     data: dict[str, object] = {"id": user.id, "updated_at": user.updated_at}
     data.update({field: getattr(user, field) for field in changed})
     return UserProfileUpdateResponse(**data)
+
+
+@router.post("/me/push-tokens", response_model=MessageResponse)
+def register_push_token(
+    payload: PushTokenRegisterRequest, user: CurrentUser, db: DbSession
+) -> MessageResponse:
+    """편집 완료 푸시 알림을 받을 디바이스 토큰을 등록한다.
+
+    사용자당 토큰 하나만 유지한다 — 같은 사용자가 새 토큰을 보내면 이전 값을
+    덮어쓴다(재설치·재로그인 대응).
+    """
+    push_token_service.upsert_token(db, user, payload.push_token, payload.platform)
+    return MessageResponse(message="푸시 토큰이 등록되었습니다.")
