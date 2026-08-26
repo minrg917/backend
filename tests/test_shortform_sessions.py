@@ -98,15 +98,21 @@ def test_turn_moves_straight_to_recommend(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["action"] == "RECOMMEND"
-    assert body["recommendation"] is not None
-    assert set(body["recommendation"]) == {
-        "recommendation_id",
-        "project_title",
-        "title",
-        "concept",
-        "editing_template_id",
-        "editing_template_version",
-    }
+    # 화면에 카드 3장을 한 번에 보여준다(2026-08-26) — AI는 호출 한 번에 1개만
+    # 주지만, 백엔드가 "다시 추천 받기"를 이어서 호출해 묶는다.
+    assert len(body["recommendations"]) == 3
+    for recommendation in body["recommendations"]:
+        assert set(recommendation) == {
+            "recommendation_id",
+            "project_title",
+            "title",
+            "concept",
+            "editing_template_id",
+            "editing_template_version",
+        }
+    # 3장이 서로 다른 템플릿이어야 한다 — 같은 카드가 중복으로 뜨면 안 된다.
+    template_ids = {r["editing_template_id"] for r in body["recommendations"]}
+    assert len(template_ids) == 3
     assert body["project_state"]["ready_for_confirmation"] is True
 
 
@@ -146,7 +152,7 @@ def test_next_recommendation_accumulates_shown_ids(
         json={"input": {"type": "TEXT", "text": "떡볶이 홍보하고 싶어요"}},
         headers=auth_headers,
     ).json()
-    first_template_id = first["recommendation"]["editing_template_id"]
+    first_template_ids = {r["editing_template_id"] for r in first["recommendations"]}
 
     response = client.post(
         f"/shortform-sessions/{session_id}/recommendations/next", headers=auth_headers
@@ -154,8 +160,12 @@ def test_next_recommendation_accumulates_shown_ids(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert first_template_id in body["shown_template_ids"]
-    assert body["recommendation"]["editing_template_id"] in body["shown_template_ids"]
+    assert len(body["recommendations"]) == 3
+    next_template_ids = {r["editing_template_id"] for r in body["recommendations"]}
+    # 이전에 보여준 템플릿과 이번에 새로 받은 템플릿이 전부 "이미 본 목록"에 쌓인다.
+    assert first_template_ids | next_template_ids <= set(body["shown_template_ids"])
+    # 두 번째 묶음은 첫 번째와 겹치지 않아야 한다.
+    assert first_template_ids.isdisjoint(next_template_ids)
 
 
 # ---------------------------------------------------------------- accept
@@ -164,9 +174,32 @@ def test_next_recommendation_accumulates_shown_ids(
 def test_accept_without_recommendation_is_409(
     client: TestClient, auth_headers: dict[str, str], session_id: int
 ) -> None:
-    response = client.post(f"/shortform-sessions/{session_id}/accept", headers=auth_headers)
+    response = client.post(
+        f"/shortform-sessions/{session_id}/accept",
+        json={"recommendation_id": "rec_아무거나"},
+        headers=auth_headers,
+    )
     assert response.status_code == 409
     assert response.json()["error_code"] == "RECOMMENDATION_NOT_READY"
+
+
+def test_accept_unknown_recommendation_id_is_404(
+    client: TestClient, auth_headers: dict[str, str], session_id: int
+) -> None:
+    """3장 중에 없는 ID를 보내면 못 찾는다 — 화면에 안 보여준 카드를 몰래 수락 못 함."""
+    client.post(
+        f"/shortform-sessions/{session_id}/turns",
+        json={"input": {"type": "TEXT", "text": "떡볶이 홍보하고 싶어요"}},
+        headers=auth_headers,
+    )
+
+    response = client.post(
+        f"/shortform-sessions/{session_id}/accept",
+        json={"recommendation_id": "rec_없는거"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "RECOMMENDATION_NOT_FOUND"
 
 
 def test_accept_creates_project_with_title_and_format(
@@ -182,34 +215,45 @@ def test_accept_creates_project_with_title_and_format(
         json={"input": {"type": "TEXT", "text": "떡볶이 홍보하고 싶어요"}},
         headers=auth_headers,
     ).json()
-    recommendation = turn["recommendation"]
+    # 3장 중 마지막 카드를 골라도 정확히 그 카드가 반영돼야 한다(첫 번째만
+    # 우연히 맞는 게 아니라는 걸 확인).
+    chosen = turn["recommendations"][-1]
 
-    response = client.post(f"/shortform-sessions/{session_id}/accept", headers=auth_headers)
+    response = client.post(
+        f"/shortform-sessions/{session_id}/accept",
+        json={"recommendation_id": chosen["recommendation_id"]},
+        headers=auth_headers,
+    )
 
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["store_id"] == store_id
-    assert body["project_title"] == recommendation["project_title"]
+    assert body["project_title"] == chosen["project_title"]
     assert body["promotion_purpose"] == "메뉴소개"
     assert body["menu_id"] == menu_id
     assert body["shorts_status"] == "DRAFT"
 
     video_format = db_session.get(VideoFormat, body["video_format_id"])
     assert video_format is not None
-    assert video_format.editing_template_id == recommendation["editing_template_id"]
-    assert video_format.editing_template_version == recommendation["editing_template_version"]
+    assert video_format.editing_template_id == chosen["editing_template_id"]
+    assert video_format.editing_template_version == chosen["editing_template_version"]
 
 
 def test_accept_populates_scenes_and_tasks(
     client: TestClient, auth_headers: dict[str, str], session_id: int
 ) -> None:
     """6.4(수락)가 7.1과 같은 로직을 재사용해 콘티·태스크까지 즉시 채운다."""
-    client.post(
+    turn = client.post(
         f"/shortform-sessions/{session_id}/turns",
         json={"input": {"type": "TEXT", "text": "떡볶이 홍보하고 싶어요"}},
         headers=auth_headers,
-    )
-    project = client.post(f"/shortform-sessions/{session_id}/accept", headers=auth_headers).json()
+    ).json()
+    chosen = turn["recommendations"][0]
+    project = client.post(
+        f"/shortform-sessions/{session_id}/accept",
+        json={"recommendation_id": chosen["recommendation_id"]},
+        headers=auth_headers,
+    ).json()
 
     scenes = client.get(f"/shorts-projects/{project['id']}/scenes", headers=auth_headers).json()
     tasks = client.get(f"/shorts-projects/{project['id']}/tasks", headers=auth_headers).json()
@@ -221,15 +265,24 @@ def test_accept_populates_scenes_and_tasks(
 def test_accept_twice_is_conflict(
     client: TestClient, auth_headers: dict[str, str], session_id: int
 ) -> None:
-    client.post(
+    turn = client.post(
         f"/shortform-sessions/{session_id}/turns",
         json={"input": {"type": "TEXT", "text": "떡볶이 홍보하고 싶어요"}},
         headers=auth_headers,
+    ).json()
+    chosen = turn["recommendations"][0]
+    first = client.post(
+        f"/shortform-sessions/{session_id}/accept",
+        json={"recommendation_id": chosen["recommendation_id"]},
+        headers=auth_headers,
     )
-    first = client.post(f"/shortform-sessions/{session_id}/accept", headers=auth_headers)
     assert first.status_code == 201
 
-    second = client.post(f"/shortform-sessions/{session_id}/accept", headers=auth_headers)
+    second = client.post(
+        f"/shortform-sessions/{session_id}/accept",
+        json={"recommendation_id": chosen["recommendation_id"]},
+        headers=auth_headers,
+    )
     assert second.status_code == 409
     assert second.json()["error_code"] == "SESSION_NOT_ACTIVE"
 

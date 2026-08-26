@@ -40,6 +40,17 @@ class SessionNotActive(ConflictError):
     message = "이미 종료된 세션입니다."
 
 
+class RecommendationNotFound(NotFoundError):
+    error_code = "RECOMMENDATION_NOT_FOUND"
+    message = "선택한 추천을 찾을 수 없습니다."
+
+
+# 화면에 한 번에 보여줄 추천 개수. AI는 호출 한 번에 1개만 준다(`docs/AI_연동_입출력.md`
+# 9번 "추천 원칙: 항상 1개만 반환") — 여러 개를 보여주는 건 백엔드가 "다시 추천 받기"를
+# 필요한 만큼 이어서 호출해 묶어주는 것이다.
+_RECOMMENDATION_BATCH_SIZE = 3
+
+
 def _representative_menus(db: Session, store_id: int) -> list[StoreMenu]:
     """가게의 대표메뉴 전체(등록순).
 
@@ -105,13 +116,53 @@ def get_owned_session(db: Session, owner: User, session_id: int) -> ShortformSes
     return session
 
 
-def submit_turn(db: Session, session: ShortformSession, payload: TurnInput) -> Any:
+def _serialize_recommendation(recommendation: Any) -> dict[str, Any]:
+    return {
+        "recommendation_id": recommendation.recommendation_id,
+        "project_title": recommendation.project_title,
+        "title": recommendation.title,
+        "concept": recommendation.concept,
+        "editing_template_id": recommendation.editing_template_id,
+        "editing_template_version": recommendation.editing_template_version,
+    }
+
+
+def _collect_recommendations(
+    store: Store,
+    session_token: str,
+    menu: StoreMenu | None,
+    first: Any,
+    shown_before_first: list[str],
+    count: int = _RECOMMENDATION_BATCH_SIZE,
+) -> tuple[list[Any], list[str]]:
+    """`first`에 이어 "다시 추천 받기"를 필요한 개수만큼 반복 호출해 묶는다.
+
+    화면에 한 번에 여러 장을 보여주기 위한 백엔드 쪽 오케스트레이션이다 — AI 계약
+    자체는 안 바뀐다(호출 한 번에 1개).
+    """
+    recommendations = [first]
+    shown = [*shown_before_first, first.editing_template_id]
+    while len(recommendations) < count:
+        next_recommendation = ai_client.get_next_shortform_recommendation(
+            store, session_token, menu, shown
+        )
+        recommendations.append(next_recommendation)
+        shown.append(next_recommendation.editing_template_id)
+    return recommendations, shown
+
+
+def submit_turn(
+    db: Session, session: ShortformSession, payload: TurnInput
+) -> tuple[Any, list[Any]]:
     """대화 turn 하나를 처리한다.
 
     `payload`(사용자가 실제로 입력한 내용)를 그대로 어댑터에 넘긴다. placeholder는
     지금 이 값을 해석하지 않지만(대화 로직 자체가 없어서), **버리지는 않는다** — AI
     연동 시 이 값을 AI 서버 요청에 그대로 실어 보내야 하므로, 여기서 흘려버리면
     연동 시점에 호출부(라우터→서비스)까지 다시 손봐야 한다.
+
+    `action`이 추천을 냈으면(`result.recommendation is not None`) 화면에 한 번에
+    보여줄 개수(`_RECOMMENDATION_BATCH_SIZE`)만큼 채워서 함께 돌려준다.
     """
     if session.status is not SessionStatus.ACTIVE:
         raise SessionNotActive
@@ -125,50 +176,48 @@ def submit_turn(db: Session, session: ShortformSession, payload: TurnInput) -> A
     )
 
     session.project_state = result.project_state
+    recommendations: list[Any] = []
     if result.recommendation is not None:
-        session.last_recommendation = {
-            "recommendation_id": result.recommendation.recommendation_id,
-            "project_title": result.recommendation.project_title,
-            "title": result.recommendation.title,
-            "concept": result.recommendation.concept,
-            "editing_template_id": result.recommendation.editing_template_id,
-            "editing_template_version": result.recommendation.editing_template_version,
-        }
-        session.shown_template_ids = [
-            *(session.shown_template_ids or []),
-            result.recommendation.editing_template_id,
-        ]
+        recommendations, shown = _collect_recommendations(
+            store,
+            session.session_token,
+            menu,
+            result.recommendation,
+            session.shown_template_ids or [],
+        )
+        session.last_recommendation = [_serialize_recommendation(r) for r in recommendations]
+        session.shown_template_ids = shown
     db.commit()
     db.refresh(session)
-    return result
+    return result, recommendations
 
 
-def get_next_recommendation(db: Session, session: ShortformSession) -> Any:
-    """다시 추천 받기. 이미 종료된 세션이면 막는다."""
+def get_next_recommendation(db: Session, session: ShortformSession) -> tuple[list[Any], list[str]]:
+    """다시 추천 받기. 이미 종료된 세션이면 막는다.
+
+    이번에도 한 번에 `_RECOMMENDATION_BATCH_SIZE`개를 채워서 돌려준다 — 화면
+    구성(카드 3장)이 처음 추천 때와 같아야 하므로.
+    """
     if session.status is not SessionStatus.ACTIVE:
         raise SessionNotActive
 
     store = db.get(Store, session.store_id)
     assert store is not None
     menu = _first_menu(db, store.id)
-    shown = session.shown_template_ids or []
+    shown_before = session.shown_template_ids or []
 
-    recommendation = ai_client.get_next_shortform_recommendation(
-        store, session.session_token, menu, shown
+    first = ai_client.get_next_shortform_recommendation(
+        store, session.session_token, menu, shown_before
+    )
+    recommendations, shown = _collect_recommendations(
+        store, session.session_token, menu, first, shown_before
     )
 
-    session.last_recommendation = {
-        "recommendation_id": recommendation.recommendation_id,
-        "project_title": recommendation.project_title,
-        "title": recommendation.title,
-        "concept": recommendation.concept,
-        "editing_template_id": recommendation.editing_template_id,
-        "editing_template_version": recommendation.editing_template_version,
-    }
-    session.shown_template_ids = [*shown, recommendation.editing_template_id]
+    session.last_recommendation = [_serialize_recommendation(r) for r in recommendations]
+    session.shown_template_ids = shown
     db.commit()
     db.refresh(session)
-    return recommendation, session.shown_template_ids
+    return recommendations, shown
 
 
 def _resolve_video_format(db: Session, recommendation: dict[str, Any]) -> VideoFormat:
@@ -216,21 +265,31 @@ def _derive_promotion(subject: dict[str, Any] | None) -> tuple[PromotionPurpose,
     return PromotionPurpose.STORE, None
 
 
-def accept_recommendation(db: Session, session: ShortformSession) -> ShortsProject:
-    """추천을 수락해 프로젝트를 만든다.
+def accept_recommendation(
+    db: Session, session: ShortformSession, recommendation_id: str
+) -> ShortsProject:
+    """추천 카드 중 하나를 수락해 프로젝트를 만든다.
 
     추천 수락 자체는 AI 호출이 필요 없다(`docs/AI_연동_입출력.md` 11번). 다만
     프로젝트가 만들어지는 순간 바로 촬영 준비가 끝나 있도록, **7.1과 같은 로직
     (`plan_service.generate_plan`)을 이어서 호출해 콘티·태스크까지 함께 채운다**
     (2026-08-26 결정 — 두 단계로 쪼개면 프론트가 6.4 다음에 7.1을 또 불러야 하고,
     깜빡하면 "포맷은 있는데 콘티가 없는" 어중간한 프로젝트가 남는다).
+
+    화면에 여러 장을 동시에 보여주므로(`_RECOMMENDATION_BATCH_SIZE`), 어느 카드를
+    골랐는지 `recommendation_id`로 받아 캐시된 목록에서 찾는다.
     """
     if session.status is not SessionStatus.ACTIVE:
         raise SessionNotActive
     if not session.last_recommendation:
         raise RecommendationNotReady
 
-    recommendation = session.last_recommendation
+    recommendation = next(
+        (r for r in session.last_recommendation if r.get("recommendation_id") == recommendation_id),
+        None,
+    )
+    if recommendation is None:
+        raise RecommendationNotFound
     subject = (session.project_state or {}).get("promotion_subject")
     promotion_purpose, menu_id = _derive_promotion(subject)
     video_format = _resolve_video_format(db, recommendation)

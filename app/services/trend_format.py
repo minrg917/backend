@@ -20,13 +20,21 @@ from app.services import ai_client
 
 
 def _apply_ai_metadata(video_format: VideoFormat, challenge: ai_client.TrendChallenge) -> None:
-    """Apply only values the AI actually supplied; never erase curated data with null."""
+    """Apply only values the AI actually supplied; never erase curated data with null.
+
+    `editing_template_id`/`version`은 이 챌린지의 촬영가이드 템플릿이 AI 쪽에서
+    승인 완료됐을 때만 채워진다(2026-08-26 확인). 이 값이 채워져야 5.1에서 고른
+    포맷으로 실제 기획 생성(`get_shooting_guide`)이 가능해진다 — 그 전엔
+    `editing_template_id`가 없어 `NotImplementedError`로 막힌다.
+    """
 
     for field in (
         "format_type",
         "expected_duration_sec",
         "shooting_difficulty",
         "requires_face",
+        "editing_template_id",
+        "editing_template_version",
     ):
         value = getattr(challenge, field)
         if value is not None:
@@ -70,6 +78,13 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
                 trend_rank=challenge.rank,
             )
             _apply_ai_metadata(video_format, challenge)
+            # 트렌드 인기 여부(challenge.active)가 아니라 "촬영가이드 템플릿이
+            # 실제로 있는가"로 활성화 여부를 정한다(2026-08-26 정정). 발굴은
+            # 됐지만 아직 승인 전인 챌린지는 트렌드로는 active여도 고르면
+            # 기획 생성이 막힌다 — 반대로 승인은 끝났지만 트렌드 순위에서
+            # 내려간 챌린지는 여전히 정상 작동한다. 그래서 판단 기준은
+            # "이 포맷을 지금 골라도 되는가"인 template 존재 여부여야 한다.
+            video_format.is_active = video_format.editing_template_id is not None
             db.add(video_format)
             added += 1
             continue
@@ -82,6 +97,7 @@ def sync_trend_formats(db: Session) -> tuple[int, int, int]:
         video_format.trend_challenge_id = challenge.id
         video_format.trend_rank = challenge.rank
         _apply_ai_metadata(video_format, challenge)
+        video_format.is_active = video_format.editing_template_id is not None
         updated += 1
 
     db.commit()

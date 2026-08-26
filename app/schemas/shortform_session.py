@@ -60,13 +60,22 @@ class TurnResponse(BaseSchema):
     assistant_message: str | None
     project_state: dict[str, Any]
     options: list[SessionOptionResponse]
-    recommendation: RecommendationResponse | None
+    # 추천이 나온 turn이면 화면에 한 번에 보여줄 개수(기본 3장)만큼 채워서 온다.
+    # 추천이 없는 turn이면 빈 배열이다 — null 대신 빈 배열을 써서 프론트가 항상
+    # 같은 타입으로 다룰 수 있게 한다.
+    recommendations: list[RecommendationResponse]
 
 
 class NextRecommendationResponse(BaseSchema):
     id: int
-    recommendation: RecommendationResponse
+    recommendations: list[RecommendationResponse]
     shown_template_ids: list[str]
+
+
+class SessionAcceptRequest(BaseSchema):
+    """여러 장 중 어느 카드를 골랐는지(2026-08-26, 추천 3장 동시 노출로 변경)."""
+
+    recommendation_id: str
 
 
 class SessionAcceptResponse(BaseSchema):
