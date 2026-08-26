@@ -87,7 +87,9 @@ curl http://127.0.0.1:8000/health      # {"status":"ok","database":"ok"}
 
 로그는 `journalctl -u sarils-api -f`로 봅니다.
 
-트렌드 포맷은 AI 서버에서 15분마다 자동 동기화됩니다. 즉시 동기화하거나 최근 실행을
+트렌드 포맷은 AI 서버에서 하루 한 번 자동 동기화됩니다(`GET /api/v1/challenges`는 AI
+내부 Trend Store를 읽기만 할 뿐 새로 갱신시키지 않으므로, 이 주기는 AI가 갱신한 결과를
+우리가 얼마나 늦게 알아채느냐만 결정합니다 — 2026-08-26). 즉시 동기화하거나 최근 실행을
 확인할 때는 아래 명령을 사용합니다.
 
 ```bash
@@ -227,12 +229,17 @@ jobs:
             sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
             sudo systemctl daemon-reload
             sudo systemctl restart sarils-api
-            sudo systemctl enable --now sarils-trend-sync.timer
+            sudo systemctl enable sarils-trend-sync.timer
+            sudo systemctl restart sarils-trend-sync.timer
 ```
 
 `sarils-api`를 먼저 재시작해 마이그레이션을 끝낸 뒤 트렌드 동기화 타이머를 켠다 —
-순서가 반대면 `enable --now`가 트리거하는 첫 실행이 아직 없는 컬럼을 찾다가 실패한다
+순서가 반대면 여기서 트리거하는 첫 실행이 아직 없는 컬럼을 찾다가 실패한다
 (2026-08-25 PR #70 첫 배포에서 발견).
+
+`enable --now` 대신 `enable` + `restart`로 나눈 이유(2026-08-26): `enable --now`는
+이미 떠 있는 타이머엔 아무 효과가 없어서, 주기(`OnUnitActiveSec`)를 바꿔도 재배포만으로는
+새 스케줄이 반영되지 않았다. `restart`로 확실히 새 스케줄을 반영한다.
 
 `main`에 push될 때만 배포한다 — `develop`이 아니다. feature/fix는 `develop`으로 계속
 쌓이고, `develop → main` PR을 머지하는 "배포 시점"에만 실서버가 갱신된다. `git pull` 대신
@@ -246,7 +253,8 @@ ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-api
 ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-trend-sync.service /etc/systemd/system/
 ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl daemon-reload
-ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable --now sarils-trend-sync.timer
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable sarils-trend-sync.timer
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-trend-sync.timer
 EOF
 sudo chmod 0440 /etc/sudoers.d/sarils-deploy
 sudo visudo -c

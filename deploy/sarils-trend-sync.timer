@@ -1,9 +1,9 @@
 [Unit]
-Description=Refresh SARILS trend video formats every 15 minutes
+Description=Refresh SARILS trend video formats once a day
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=15min
+OnUnitActiveSec=1d
 RandomizedDelaySec=60
 Persistent=true
 Unit=sarils-trend-sync.service
