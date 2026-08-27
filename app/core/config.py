@@ -60,7 +60,6 @@ class Settings(BaseSettings):
     AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
     AI_RENDERER_ALLOWED_HOSTS: str = ""
     FFMPEG_PATH: str = "ffmpeg"
-    COVER_FRAME_SECOND: float = 1.0
 
     # SNS 연동 (R16) — 플랫폼 개발자 콘솔에서 발급받은 값을 넣는다.
     # 비어 있는 플랫폼은 연동 시작(16.1)에서 503 SNS_NOT_CONFIGURED로 응답한다 —

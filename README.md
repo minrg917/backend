@@ -13,7 +13,7 @@ FLY AI 열정 2조. 소상공인이 AI의 도움을 받아 숏폼(릴스/쇼츠)
 
 ## 로컬 실행
 
-**필요한 것**: Python 3.12, [Poetry](https://python-poetry.org/docs/#installation), Docker
+**필요한 것**: Python 3.12, [Poetry](https://python-poetry.org/docs/#installation), Docker, FFmpeg
 
 ```bash
 # 1) 환경변수 파일 준비

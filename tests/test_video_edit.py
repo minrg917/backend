@@ -1,6 +1,7 @@
 """AI 자동편집 테스트 (API명세서 14.1 편집시작 / 14.2 결과조회 / 14.3 수정요청)."""
 
 import io
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -71,6 +72,34 @@ def test_renderer_download_uses_internal_auth_and_persists_cover(
     assert saved[video_key] == MP4_BYTES
     assert cover_key.endswith(".jpg")
     assert captured["headers"] == {"X-Internal-API-Key": "shared-secret"}
+
+
+def test_generate_cover_uses_representative_thumbnail_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "result.mp4"
+    source.write_bytes(MP4_BYTES)
+    saved: dict[str, bytes] = {}
+    captured: list[str] = []
+
+    class FakeStorage:
+        def save(self, key, stream, content_type=None):
+            assert content_type == "image/jpeg"
+            saved[key] = stream.read()
+            return key
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        captured.extend(command)
+        Path(command[-1]).write_bytes(b"jpeg")
+
+    monkeypatch.setattr(video_edit.subprocess, "run", fake_run)
+
+    key = video_edit._generate_cover(FakeStorage(), source, "outputs/result.jpg")
+
+    assert key == "outputs/result.jpg"
+    assert "thumbnail=30,scale=720:-2" in captured
+    assert saved[key] == b"jpeg"
 
 
 @pytest.fixture
