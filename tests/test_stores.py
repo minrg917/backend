@@ -274,6 +274,22 @@ def test_create_store_prefers_payload_kakao_place_id_over_url_parsing(
     assert captured == {"store_id": response.json()["id"], "place_id": "27557389"}
 
 
+def test_create_store_triggers_trade_area_insight_generation(
+    client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """가게 등록 직후 상권분석도 메뉴 자동수집과 같은 방식으로 백그라운드 생성된다."""
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.api.routers.stores.insight_service.generate_trade_area_insight",
+        lambda store_id, session_factory: captured.update(store_id=store_id),
+    )
+
+    response = _create_store(client, auth_headers)
+
+    assert response.status_code == 201
+    assert captured == {"store_id": response.json()["id"]}
+
+
 def test_create_store_falls_back_to_url_when_kakao_place_id_missing(
     client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
