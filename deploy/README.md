@@ -75,10 +75,12 @@ AWS_SECRET_ACCESS_KEY=
 sudo cp deploy/sarils-api.service /etc/systemd/system/
 sudo cp deploy/sarils-trend-sync.service deploy/sarils-trend-sync.timer /etc/systemd/system/
 sudo cp deploy/sarils-edit-notify.service deploy/sarils-edit-notify.timer /etc/systemd/system/
+sudo cp deploy/sarils-metrics-collect.service deploy/sarils-metrics-collect.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now sarils-api
 sudo systemctl enable --now sarils-trend-sync.timer
 sudo systemctl enable --now sarils-edit-notify.timer
+sudo systemctl enable --now sarils-metrics-collect.timer
 
 systemctl status sarils-api
 curl http://127.0.0.1:8000/health      # {"status":"ok","database":"ok"}
@@ -108,6 +110,16 @@ journalctl -u sarils-trend-sync.service -n 50
 sudo systemctl start sarils-edit-notify.service
 systemctl list-timers sarils-edit-notify.timer
 journalctl -u sarils-edit-notify.service -n 50
+```
+
+Instagram/YouTube 성과 지표는 하루 한 번 수집됩니다(`sarils-metrics-collect.timer`,
+2026-08-27 추가). 연결 확정(16.3, `LINKED`)된 게시물이 없으면 아무 일도 하지
+않습니다. 토큰이 만료 2일 이내로 임박하면 조회 전에 자동으로 갱신합니다.
+
+```bash
+sudo systemctl start sarils-metrics-collect.service
+systemctl list-timers sarils-metrics-collect.timer
+journalctl -u sarils-metrics-collect.service -n 50
 ```
 
 ## 4. nginx + 도메인 + HTTPS
@@ -241,12 +253,16 @@ jobs:
             sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-edit-notify.service /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-edit-notify.timer /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-metrics-collect.service /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-metrics-collect.timer /etc/systemd/system/
             sudo systemctl daemon-reload
             sudo systemctl restart sarils-api
             sudo systemctl enable sarils-trend-sync.timer
             sudo systemctl restart sarils-trend-sync.timer
             sudo systemctl enable sarils-edit-notify.timer
             sudo systemctl restart sarils-edit-notify.timer
+            sudo systemctl enable sarils-metrics-collect.timer
+            sudo systemctl restart sarils-metrics-collect.timer
 ```
 
 `sarils-api`를 먼저 재시작해 마이그레이션을 끝낸 뒤 트렌드 동기화 타이머를 켠다 —
@@ -275,6 +291,10 @@ ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable sarils-trend-sync.timer
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-trend-sync.timer
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable sarils-edit-notify.timer
 ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-edit-notify.timer
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-metrics-collect.service /etc/systemd/system/
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/install -m 0644 deploy/sarils-metrics-collect.timer /etc/systemd/system/
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl enable sarils-metrics-collect.timer
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart sarils-metrics-collect.timer
 EOF
 sudo chmod 0440 /etc/sudoers.d/sarils-deploy
 sudo visudo -c
