@@ -381,6 +381,7 @@ def test_list_insights_returns_spec_fields(
         "insight_title",
         "insight_content",
         "insight_source",
+        "insight_data",
         "generated_at",
     }
     assert body["insights"][0]["generated_at"].endswith("Z")
@@ -417,6 +418,86 @@ def test_insights_hidden_from_other_user(
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "STORE_NOT_FOUND"
+
+
+# ---------------------------------------------------------------- 3.5 상권분석 생성 (2026-08-27)
+
+
+def test_trade_area_insight_placeholder_does_not_fabricate(db_session: Session) -> None:
+    """AI 연동 전에는 나이·성별 분포를 지어내지 않는다 — 실제 통계 주장이라서다."""
+    from app.services import ai_client
+
+    insight = ai_client.get_trade_area_insight(
+        type("FakeStore", (), {"name": "행복분식", "category": "분식"})()
+    )
+
+    assert insight.district_name is None
+    assert insight.summary is None
+    assert insight.age_distribution is None
+    assert insight.gender_distribution is None
+
+
+def test_generate_trade_area_insight_saves_when_ai_provides_data(
+    db_session: Session, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import ai_client
+    from app.services import store_insight as insight_service
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_trade_area_insight",
+        lambda store: ai_client.TradeAreaInsight(
+            district_name="샤로수길",
+            summary="20대 초중반이 많이 찾는 활기찬 청년 상권입니다.",
+            age_distribution={"20s": 55, "30s": 45},
+            gender_distribution={"male": 40, "female": 60},
+        ),
+    )
+
+    insight_service.generate_trade_area_insight(store_id, lambda: db_session)
+
+    saved = db_session.query(StoreInsight).filter(StoreInsight.store_id == store_id).one()
+    assert saved.insight_type == "상권분석"
+    assert saved.insight_title == "샤로수길"
+    assert saved.insight_content == "20대 초중반이 많이 찾는 활기찬 청년 상권입니다."
+    assert saved.insight_source is None  # 여러 출처를 종합한 결과라 분류하지 않는다
+    assert saved.insight_data == {
+        "age_distribution": {"20s": 55, "30s": 45},
+        "gender_distribution": {"male": 40, "female": 60},
+    }
+
+
+def test_generate_trade_area_insight_skips_when_nothing_to_save(
+    db_session: Session, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI가 placeholder처럼 전부 None을 주면 빈 행을 만들지 않는다."""
+    from app.services import ai_client
+    from app.services import store_insight as insight_service
+
+    monkeypatch.setattr(
+        ai_client, "get_trade_area_insight", lambda store: ai_client.TradeAreaInsight()
+    )
+
+    insight_service.generate_trade_area_insight(store_id, lambda: db_session)
+
+    assert db_session.query(StoreInsight).filter(StoreInsight.store_id == store_id).count() == 0
+
+
+def test_generate_trade_area_insight_silently_ignores_errors(
+    db_session: Session, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실패해도 예외가 밖으로 새면 안 된다 — 백그라운드 작업이라 아무도 못 본다."""
+    from app.services import ai_client
+    from app.services import store_insight as insight_service
+
+    def boom(store: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ai_client, "get_trade_area_insight", boom)
+
+    insight_service.generate_trade_area_insight(store_id, lambda: db_session)
+
+    assert db_session.query(StoreInsight).filter(StoreInsight.store_id == store_id).count() == 0
 
 
 def test_list_includes_hidden_targets(

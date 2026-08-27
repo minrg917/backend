@@ -953,3 +953,54 @@ def _placeholder_recommendation(
         editing_template_id=template_id,
         editing_template_version=1,
     )
+
+
+# ------------------------------------------------------- 3.5 상권분석
+
+
+@dataclass(frozen=True)
+class TradeAreaInsight:
+    """상권분석 결과 (`docs/AI_연동_요청_2026-08-27_상권분석.md`, AI팀과 합의 완료).
+
+    나이·성별 분포는 **실제 인구통계 주장**이다 — 촬영가이드 같은 "임시 뼈대"와
+    달리 placeholder에서 지어내면 안 된다(가격·영업시간과 같은 취급). 그래서
+    모든 필드가 기본값 `None`이고, placeholder 모드에서는 전부 `None`으로 둔다.
+    """
+
+    district_name: str | None = None
+    summary: str | None = None
+    age_distribution: dict[str, int] | None = None
+    gender_distribution: dict[str, int] | None = None
+
+
+def get_trade_area_insight(store: Store) -> TradeAreaInsight:
+    """가게 상권분석을 가져온다 (2026-08-27, 가게 등록 2.2 직후 백그라운드 호출).
+
+    AI 서버가 없으면 전부 `None`이다 — 나이·성별 분포는 지어낼 수 없는 종류의
+    값이라, 다른 placeholder(캡션 등 문구성 텍스트)와 원칙이 다르다.
+    """
+    if not is_enabled():
+        return TradeAreaInsight()
+
+    data = _request_json(
+        "POST",
+        # TODO(AI팀 확정 후 교체): 정확한 경로는 아직 AI팀이 안 정해줬다.
+        # 요청/응답 형식만 `docs/AI_연동_요청_2026-08-27_상권분석.md`로 합의됨.
+        "/api/v1/stores/trade-area-insight",
+        json_body={
+            "store": {
+                "name": store.name,
+                "category": store.category,
+                "sub_category": store.sub_category,
+                "address": store.address,
+                "latitude": float(store.latitude) if store.latitude is not None else None,
+                "longitude": float(store.longitude) if store.longitude is not None else None,
+            }
+        },
+    )
+    return TradeAreaInsight(
+        district_name=data.get("district_name"),
+        summary=data.get("summary"),
+        age_distribution=data.get("age_distribution"),
+        gender_distribution=data.get("gender_distribution"),
+    )

@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field, model_validator
 
@@ -280,6 +281,9 @@ class InsightResponse(BaseSchema):
     insight_title: str | None
     insight_content: str | None
     insight_source: str | None
+    # 2026-08-27 추가. 상권분석의 나이·성별 분포처럼 텍스트로 담기 힘든 구조화된
+    # 값. 유형마다 모양이 다르고, 없으면 null이다(예: 상권분석 외 다른 유형).
+    insight_data: dict[str, Any] | None = None
     generated_at: UtcDatetime
 
 

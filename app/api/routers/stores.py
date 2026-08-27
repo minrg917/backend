@@ -99,6 +99,8 @@ def create_store(
 
     검색 단계에서 카카오 플레이스 링크가 잡혀 있으면, 응답을 내보낸 뒤
     백그라운드로 대표 메뉴 몇 개를 자동으로 채운다(실패해도 등록에는 영향 없음).
+    상권분석도 같은 방식으로 백그라운드에서 미리 만들어 캐시해둔다(2026-08-27) —
+    인사이트 화면(3.5)은 이렇게 저장된 값만 조회하고 그 자리에서 AI를 부르지 않는다.
     """
     store = store_service.create_store(db, user, payload)
 
@@ -111,6 +113,8 @@ def create_store(
         background_tasks.add_task(
             menu_crawl_service.enrich_menu_from_kakao, store.id, place_id, SessionLocal
         )
+
+    background_tasks.add_task(insight_service.generate_trade_area_insight, store.id, SessionLocal)
 
     status = store_service.get_import_status(db, store)
     return StoreCreateResponse(
