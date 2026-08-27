@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     AI_SERVER_URL: str = ""
     AI_SERVER_API_KEY: str = ""
     AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+    AI_RENDERER_ALLOWED_HOSTS: str = ""
+    FFMPEG_PATH: str = "ffmpeg"
 
     # SNS 연동 (R16) — 플랫폼 개발자 콘솔에서 발급받은 값을 넣는다.
     # 비어 있는 플랫폼은 연동 시작(16.1)에서 503 SNS_NOT_CONFIGURED로 응답한다 —
@@ -149,6 +151,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def ai_renderer_allowed_host_set(self) -> set[str]:
+        return {
+            host.strip().lower()
+            for host in self.AI_RENDERER_ALLOWED_HOSTS.split(",")
+            if host.strip()
+        }
 
 
 @lru_cache

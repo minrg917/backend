@@ -8,13 +8,18 @@
 """
 
 import json
+import logging
+import subprocess
 import tempfile
 import uuid
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.shooting_task import ShootingTask
 from app.models.shorts_project import ShortsProject
@@ -26,6 +31,8 @@ from app.models.video_output import RenderStatus, VideoOutput
 from app.schemas.shorts_project import TimelineItem
 from app.services import ai_client
 from app.storage import StorageError, get_storage, to_public_url
+
+logger = logging.getLogger(__name__)
 
 # 렌더링 진행률. ⚠️ 실제 진행률이 아니라 상태에서 매핑한 근사값이다.
 # 렌더러가 붙으면 실제 값을 받아 이 표를 대체한다.
@@ -119,6 +126,9 @@ def start_edit(db: Session, project: ShortsProject, target_platform: str) -> Vid
     이미 끝난(`COMPLETED`/`FAILED`) 편집을 다시 시작하는 건 재시도로 보고 그대로
     새로 만든다.
     """
+    db.execute(
+        select(ShortsProject.id).where(ShortsProject.id == project.id).with_for_update()
+    ).scalar_one()
     existing = _find_active_output(db, project, target_platform)
     if existing is not None:
         return sync_output(db, existing)
@@ -200,6 +210,9 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     output.render_progress = run.progress
     if new_status is RenderStatus.FAILED:
         output.error_message = run.error_message
+    output.queue_position = run.queue_position
+    output.estimated_wait_sec = run.estimated_wait_sec
+    output.stage_elapsed_sec = run.stage_elapsed_sec
     if new_status == output.render_status:
         db.commit()
         db.refresh(output)
@@ -209,9 +222,13 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     if new_status is RenderStatus.COMPLETED:
         result = ai_client.get_editing_run_result(output.ai_run_id)
         output.edit_recipe = json.dumps(result.recipe or {}, ensure_ascii=False)
-        output.video_url = _persist_rendered_video(output.shorts_project_id, result.video_url)
-        output.cover_image_url = result.cover_image_url
+        output.video_url, output.cover_image_url = _persist_rendered_video(
+            output.shorts_project_id, result.video_url
+        )
         output.resolution = result.resolution
+        output.warnings = result.warnings or []
+        output.missing_scene_roles = result.missing_scene_roles or []
+        output.available_options = result.available_options or []
         # 배경음악을 직접 입히지 않기로 확정돼 항상 false다(2026-08-24 결정,
         # `docs/AI_연동_입출력.md` 19번).
         output.has_licensed_audio = False
@@ -229,34 +246,90 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
         result = ai_client.get_editing_run_result(output.ai_run_id)
         output.missing_scene_roles = result.missing_scene_roles or []
         output.available_options = result.available_options or []
+        output.warnings = result.warnings or []
 
     db.commit()
     db.refresh(output)
     return output
 
 
-def _persist_rendered_video(project_id: int, source_url: str | None) -> str | None:
-    """AI 렌더러의 사설 URL을 메인 저장소로 스트리밍 복사하고 DB용 키를 반환한다."""
+def _persist_rendered_video(
+    project_id: int, source_url: str | None
+) -> tuple[str | None, str | None]:
+    """인증된 AI 결과를 저장하고 최종 영상에서 백엔드 커버를 생성한다."""
     if not source_url:
-        return None
+        return None, None
 
-    key = f"projects/{project_id}/outputs/{uuid.uuid4().hex}.mp4"
+    _validate_renderer_url(source_url)
+    identifier = uuid.uuid4().hex
+    video_key = f"projects/{project_id}/outputs/{identifier}.mp4"
+    cover_key = f"projects/{project_id}/outputs/{identifier}.jpg"
+    source_path: Path | None = None
     try:
-        with httpx.stream(
-            "GET",
-            source_url,
-            timeout=httpx.Timeout(180.0, connect=5.0),
-        ) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "video/mp4").split(";", 1)[0]
-            with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024) as stream:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as stream:
+            source_path = Path(stream.name)
+            with httpx.stream(
+                "GET",
+                source_url,
+                headers={"X-Internal-API-Key": settings.AI_SERVER_API_KEY},
+                timeout=httpx.Timeout(180.0, connect=5.0),
+            ) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "video/mp4").split(";", 1)[0]
                 for chunk in response.iter_bytes():
                     stream.write(chunk)
-                stream.seek(0)
-                get_storage().save(key, stream, content_type)
-    except (httpx.HTTPError, StorageError) as exc:
+        storage = get_storage()
+        with source_path.open("rb") as video_stream:
+            storage.save(video_key, video_stream, content_type)
+        generated_cover = _generate_cover(storage, source_path, cover_key)
+    except (httpx.HTTPError, OSError, StorageError) as exc:
         raise ai_client.AIServiceUnavailable from exc
-    return key
+    finally:
+        if source_path is not None:
+            source_path.unlink(missing_ok=True)
+    return video_key, generated_cover
+
+
+def _validate_renderer_url(source_url: str) -> None:
+    source = urlsplit(source_url)
+    ai_server = urlsplit(settings.AI_SERVER_URL)
+    allowed_hosts = set(settings.ai_renderer_allowed_host_set)
+    if ai_server.hostname:
+        allowed_hosts.add(ai_server.hostname.lower())
+    if source.scheme not in {"http", "https"} or not source.hostname:
+        raise ai_client.AIServiceUnavailable
+    if source.hostname.lower() not in allowed_hosts:
+        logger.error("허용되지 않은 AI 렌더러 호스트: %s", source.hostname)
+        raise ai_client.AIServiceUnavailable
+
+
+def _generate_cover(storage, source_path: Path, cover_key: str) -> str | None:
+    cover_path = source_path.with_suffix(".jpg")
+    try:
+        subprocess.run(
+            [
+                settings.FFMPEG_PATH,
+                "-y",
+                "-i",
+                str(source_path),
+                "-frames:v",
+                "1",
+                "-vf",
+                "thumbnail=30,scale=720:-2",
+                str(cover_path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        with cover_path.open("rb") as cover_stream:
+            storage.save(cover_key, cover_stream, "image/jpeg")
+        return cover_key
+    except (OSError, subprocess.SubprocessError, StorageError):
+        logger.warning("최종 영상 커버 이미지 생성 실패", exc_info=True)
+        return None
+    finally:
+        cover_path.unlink(missing_ok=True)
 
 
 def latest_output(db: Session, project: ShortsProject) -> VideoOutput:

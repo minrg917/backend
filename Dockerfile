@@ -24,9 +24,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# curl은 헬스체크용. 나머지는 slim 이미지에 이미 있다.
+# curl은 헬스체크, ffmpeg는 최종 영상 커버 프레임 추출에 쓴다.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.venv /app/.venv
