@@ -70,11 +70,11 @@ def test_shortform_session_maps_store_context(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
-    monkeypatch.setattr(
-        ai_client,
-        "_request_json",
-        lambda *args, **kwargs: {
+    captured: dict[str, Any] = {}
+
+    def fake_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {
             "estimated_shooting_sec": 480,
             "difficulty": "하",
             "scenes": [{"scene_order": 1, "scene_description": "완성 메뉴"}],
@@ -85,8 +85,10 @@ def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> 
                     "shooting_scene_order": 1,
                 }
             ],
-        },
-    )
+        }
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(ai_client, "_request_json", fake_request)
     video_format = VideoFormat(
         editing_template_id="edit_template_014",
         editing_template_version=1,
@@ -96,12 +98,41 @@ def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> 
 
     guide = ai_client.get_shooting_guide(
         video_format,
-        Store(id=10, user_id=1, name="행복분식"),
-        ShortsProject(id=30, store_id=10),
+        Store(id=10, user_id=1, name="행복분식", category="분식"),
+        ShortsProject(id=30, store_id=10, promotion_purpose=PromotionPurpose.MENU),
+        menu_name="떡볶이",
     )
 
     assert guide.scenes[0].scene_description == "완성 메뉴"
     assert guide.tasks[0].scene_index == 0
+    assert captured["query_params"]["store_name"] == "행복분식"
+    assert captured["query_params"]["business_type"] == "분식"
+    assert captured["query_params"]["menu_name"] == "떡볶이"
+    assert captured["query_params"]["promotion_subject"] == "떡볶이"
+
+
+def test_editing_status_maps_queue_and_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "id": "edit_123",
+            "status": "QUEUED",
+            "stage": "QUEUED",
+            "progress": 12,
+            "queue_position": 3,
+            "estimated_wait_sec": 1800,
+            "stage_elapsed_sec": 25,
+        },
+    )
+
+    run = ai_client.get_editing_run("edit_123")
+
+    assert run.progress == 12
+    assert run.queue_position == 3
+    assert run.estimated_wait_sec == 1800
+    assert run.stage_elapsed_sec == 25
 
 
 def test_shooting_guide_builds_tasks_when_template_only_has_scenes(
@@ -131,6 +162,37 @@ def test_shooting_guide_builds_tasks_when_template_only_has_scenes(
 
     assert guide.tasks[0].task_title == "메뉴 클로즈업 촬영"
     assert guide.tasks[0].scene_index == 0
+
+
+def test_shooting_guide_rejects_dialogue_over_nine_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "scenes": [
+                {
+                    "scene_order": 1,
+                    "scene_description": "메뉴",
+                    "scene_dialogue": "열글자가넘는대사입니다",
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(ai_client.AIServiceUnavailable):
+        ai_client.get_shooting_guide(
+            VideoFormat(
+                editing_template_id="edit_template_014",
+                editing_template_version=1,
+                format_title="메뉴 소개",
+                reference_url="internal://template",
+            ),
+            Store(id=10, user_id=1, name="행복분식"),
+            ShortsProject(id=30, store_id=10),
+        )
 
 
 def test_shooting_guide_defaults_task_type_and_guide_type_when_missing(
@@ -289,6 +351,8 @@ def test_editing_result_maps_nested_render(monkeypatch: pytest.MonkeyPatch) -> N
                 },
                 "post_note": "플랫폼에서 '분식 릴스'를 검색해 음원을 추가하세요.",
             },
+            "warnings": ["SOURCE_ROLE_MATCH_FALLBACK"],
+            "missing_scene_roles": ["REACTION"],
         },
     )
 
@@ -300,3 +364,5 @@ def test_editing_result_maps_nested_render(monkeypatch: pytest.MonkeyPatch) -> N
     assert result.publishing.title == "오늘의 행복분식"
     assert len(result.publishing.hashtags) == 5
     assert result.publishing.track["search_keyword"] == "분식 릴스"
+    assert result.warnings == ["SOURCE_ROLE_MATCH_FALLBACK"]
+    assert result.missing_scene_roles == ["REACTION"]

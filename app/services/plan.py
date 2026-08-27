@@ -7,6 +7,7 @@ from app.core.exceptions import BadRequestError
 from app.models.shooting_task import ShootingTask, TaskStatus
 from app.models.shorts_project import ShortsProject
 from app.models.store import Store
+from app.models.store_menu import StoreMenu
 from app.models.storyboard_scene import StoryboardScene
 from app.schemas.shorts_project import SceneUpdateRequest, ShootingSummary
 from app.services import ai_client
@@ -41,7 +42,13 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
     store = db.get(Store, project.store_id)
     assert store is not None  # 프로젝트가 있으면 가게도 있다(FK)
 
-    guide = ai_client.get_shooting_guide(video_format, store, project)
+    menu = db.get(StoreMenu, project.menu_id) if project.menu_id is not None else None
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        store,
+        project,
+        menu_name=menu.name if menu is not None else None,
+    )
 
     # 기존 장면·태스크 제거 후 재생성. 같은 트랜잭션에서 처리해 중간 상태가 남지 않게 한다.
     # 태스크를 함께 지우지 않으면 옛 포맷의 태스크가 남아 찍지 않아도 될 컷을 찍게 된다.

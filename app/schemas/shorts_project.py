@@ -403,6 +403,9 @@ class EditResultResponse(BaseSchema):
     # AI 편집 단계 원문(PREPARING_VIDEO_CONTEXT 등). 없으면 null — "영상 준비 중"
     # 같은 세부 안내에 쓸 수 있다(2026-08-27 추가).
     stage: str | None = None
+    queue_position: int | None = None
+    estimated_wait_sec: int | None = None
+    stage_elapsed_sec: int | None = None
     preview_video_url: str | None
     timeline_summary: list[TimelineItem]
     # render_status가 SOURCE_GAP일 때만 채워진다(`docs/AI_연동_입출력.md` 21번).
@@ -412,6 +415,7 @@ class EditResultResponse(BaseSchema):
     # render_status가 FAILED일 때만 채워진다(2026-08-27 추가). AI가 준 실패 사유
     # 원문이라 사용자에게 그대로 보여주기보다는 문의·로그용으로 쓰는 걸 권장한다.
     error_message: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ReviseRequestType(StrEnum):
