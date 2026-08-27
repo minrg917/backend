@@ -212,6 +212,58 @@ def test_menu_of_another_store_is_not_reachable(
     assert response.json()["error_code"] == "MENU_NOT_FOUND"
 
 
+def test_list_menus_signs_stored_image_key(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """저장된 값이 저장소 키(255자 제한 때문에 3.3 업로드가 아니라 키만 저장됨)면
+    조회 시 전체 URL로 바꿔서 내려줘야 한다 (2026-08-27 FE 리포트 — 지금까지
+    키를 그대로 돌려줘서 그 값으로 이미지에 접근하면 403이 났다).
+    """
+    menu_id = _create_menu(client, auth_headers, store_id).json()["id"]
+    client.patch(
+        f"/stores/{store_id}/menus/{menu_id}",
+        json={"image_url": "stores/1/menus/abc123.jpg"},
+        headers=auth_headers,
+    )
+
+    menu = client.get(f"/stores/{store_id}/menus", headers=auth_headers).json()["menus"][0]
+
+    assert menu["image_url"].startswith("http://")
+    assert menu["image_url"].endswith("stores/1/menus/abc123.jpg")
+
+
+def test_patch_menu_response_signs_image_url(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """PATCH 응답 자체도 서명된 URL을 돌려줘야 한다 — GET을 다시 안 불러도 되게."""
+    menu_id = _create_menu(client, auth_headers, store_id).json()["id"]
+
+    response = client.patch(
+        f"/stores/{store_id}/menus/{menu_id}",
+        json={"image_url": "stores/1/menus/abc123.jpg"},
+        headers=auth_headers,
+    )
+
+    assert response.json()["image_url"].startswith("http://")
+
+
+def test_menu_image_url_passes_through_external_url_unchanged(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """카카오·네이버가 준 외부 URL은 이미 절대 URL이라 그대로 통과해야 한다."""
+    menu_id = _create_menu(client, auth_headers, store_id).json()["id"]
+    external_url = "https://img1.kakaocdn.net/menu/abc.jpg"
+
+    client.patch(
+        f"/stores/{store_id}/menus/{menu_id}",
+        json={"image_url": external_url},
+        headers=auth_headers,
+    )
+
+    menu = client.get(f"/stores/{store_id}/menus", headers=auth_headers).json()["menus"][0]
+    assert menu["image_url"] == external_url
+
+
 def test_menu_price_cannot_be_negative(
     client: TestClient, auth_headers: dict[str, str], store_id: int
 ) -> None:
