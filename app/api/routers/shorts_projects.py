@@ -220,11 +220,13 @@ def get_edit_result(
         video_output_id=output.id,
         render_status=output.render_status,
         progress_percent=edit_service.progress_percent(output),
+        stage=output.render_stage,
         # 미리보기 전용 파일을 따로 만들기 전까지는 결과 영상을 그대로 쓴다
         preview_video_url=to_public_url(storage, output.video_url),
         timeline_summary=edit_service.build_timeline(db, project),
         missing_scene_roles=output.missing_scene_roles,
         available_options=output.available_options,
+        error_message=output.error_message,
     )
 
 

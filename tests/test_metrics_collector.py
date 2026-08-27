@@ -174,6 +174,34 @@ def test_collect_all_skips_connection_when_refresh_fails(
     assert (checked, collected) == (1, 0)
 
 
+def test_collect_for_post_returns_true_and_stores_snapshot(
+    db_session: Session, user_id: int, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """16.3 연결확정 직후 단건 즉시 수집용 진입점 (2026-08-27)."""
+    post = _make_linked_post(db_session, user_id, store_id, "INSTAGRAM")
+    monkeypatch.setattr(httpx, "get", _fake_insights_get)
+
+    assert metrics_collector.collect_for_post(db_session, post) is True
+
+    metrics = list(
+        db_session.scalars(select(SnsPostMetric).where(SnsPostMetric.sns_post_id == post.id))
+    )
+    assert len(metrics) == 1
+
+
+def test_collect_for_post_returns_false_when_no_metrics(
+    db_session: Session, user_id: int, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    post = _make_linked_post(db_session, user_id, store_id, "INSTAGRAM")
+
+    def fake_get(url: str, params: dict[str, Any], timeout: float) -> httpx.Response:
+        return httpx.Response(200, json={"data": []}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    assert metrics_collector.collect_for_post(db_session, post) is False
+
+
 def test_collect_all_appends_new_snapshot_without_deleting_old(
     db_session: Session, user_id: int, store_id: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:

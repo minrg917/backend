@@ -182,6 +182,13 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
 
     이미 끝난 상태(`COMPLETED`/`FAILED`/`SOURCE_GAP`)거나 `ai_run_id`가 없으면
     (레거시 데이터) 그대로 돌려준다 — 끝난 편집은 다시 진행되지 않는다.
+
+    **`stage`/`progress`는 상태 전환 여부와 무관하게 매번 갱신한다**(2026-08-27
+    추가). 예전엔 상태(`PROCESSING` 등)가 안 바뀌면 아무것도 안 하고 돌아갔는데,
+    그러면 같은 `PROCESSING` 안에서 실제 진행이 20%→80%로 올라가도 화면엔 절대
+    안 보였다. `error_message`는 AI가 실패 사유를 실어서 주는데도(`docs/AI_연동_
+    입출력.md` 17번) 지금까지 버리고 있었다 — 실서버 편집 실패(project 56/50)를
+    조사하다가 발견, DB 어디에도 실패 이유가 안 남아 있어 진단이 안 됐다.
     """
     still_in_progress = output.render_status in (RenderStatus.PENDING, RenderStatus.PROCESSING)
     if not still_in_progress or not output.ai_run_id:
@@ -189,7 +196,13 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
 
     run = ai_client.get_editing_run(output.ai_run_id)
     new_status = _map_status(run.status)
+    output.render_stage = run.stage
+    output.render_progress = run.progress
+    if new_status is RenderStatus.FAILED:
+        output.error_message = run.error_message
     if new_status == output.render_status:
+        db.commit()
+        db.refresh(output)
         return output
 
     output.render_status = new_status
@@ -262,9 +275,13 @@ def latest_output(db: Session, project: ShortsProject) -> VideoOutput:
 def progress_percent(output: VideoOutput) -> int:
     """렌더링 진행률.
 
-    ⚠️ **실제 진행률이 아니다.** 렌더러가 없어 상태에서 매핑한 근사값이며,
-    `PROCESSING`은 항상 50을 돌려준다. 렌더러가 붙으면 여기만 바꾼다.
+    **AI가 준 실제 값(`render_progress`)이 있으면 그걸 쓴다**(2026-08-27부터 —
+    AI 응답에 이미 실려 있었는데 지금까지 안 읽고 있었다). placeholder 모드처럼
+    AI가 진행률을 안 주는 경우에만 상태 기반 근사값(`PENDING`=0, `PROCESSING`=50,
+    `COMPLETED`=100)으로 대체한다.
     """
+    if output.render_progress is not None:
+        return output.render_progress
     return _PROGRESS_BY_STATUS.get(RenderStatus(output.render_status), 0)
 
 

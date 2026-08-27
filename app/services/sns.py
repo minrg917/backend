@@ -1,5 +1,6 @@
 """SNS 연동·게시 로직 (API명세서 16.1 연동 / 16.2 게시 / 16.3 연결확정)."""
 
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -13,6 +14,8 @@ from app.models.store import Store
 from app.models.user import User
 from app.models.video_output import VideoOutput
 from app.services import sns_oauth
+
+logger = logging.getLogger("sarils.sns")
 
 
 class ConnectionNotFound(NotFoundError):
@@ -195,10 +198,25 @@ def link_post(
 
     `posted_at`은 선택이다 — 안 주면 연결한 시각으로 둔다. 성과 비교(17.2)의
     "게시 후 경과일"에 쓰이므로 비워두면 신뢰도가 실제보다 낮게 잡힌다.
+
+    **연결하자마자 지표를 한 번 즉시 당겨온다**(2026-08-27). 원래는 하루 한 번
+    도는 배치(`sarils-metrics-collect.timer`)만 채웠는데, 그러면 연결 직후
+    성과 화면이 최대 24시간 비어 보인다. 실패해도 무시한다 — 이건 부가 기능이고
+    16.3 자체는 이미 성공했으니, 못 가져온 지표는 다음 배치가 채운다. 순환
+    import(`sns.py` ↔ `metrics_collector.py`, 후자가 토큰 갱신에 `save_connection`을
+    쓴다) 때문에 여기서 지연 임포트한다.
     """
     post.external_post_id = external_post_id
     post.posted_at = posted_at or utcnow()
     post.post_status = PostStatus.LINKED
     db.commit()
     db.refresh(post)
+
+    from app.services import metrics_collector
+
+    try:
+        metrics_collector.collect_for_post(db, post)
+    except Exception:
+        logger.exception("연결확정 직후 즉시 지표 수집 실패 (post_id=%s)", post.id)
+
     return post

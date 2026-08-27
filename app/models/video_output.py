@@ -10,7 +10,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -80,6 +80,18 @@ class VideoOutput(Base, TimestampMixin):
     # 도는데, 이 값이 없으면 같은 산출물에 계속 알림을 다시 보내게 된다.
     push_notified_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, comment="편집 완료/실패 푸시 알림을 보낸 시각(UTC)"
+    )
+    # 2026-08-27 추가. AI가 `GET /editing-runs/{run_id}` 응답에 이미 stage·progress·
+    # error_message를 실어서 주고 있었는데, 지금까지 파싱만 하고 버리고 있었다
+    # (실서버 장애 조사 중 발견 — 실패 원인을 알 방법이 저희 DB엔 하나도 없었다).
+    render_stage: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, comment="AI 편집 단계(PREPARING_VIDEO_CONTEXT 등)"
+    )
+    render_progress: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="AI가 보고하는 실제 진행률(0~100). 없으면 근사값 사용"
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="FAILED일 때 AI가 준 실패 사유 원문"
     )
 
     def __repr__(self) -> str:
