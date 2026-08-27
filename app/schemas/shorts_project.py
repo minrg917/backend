@@ -398,14 +398,20 @@ class TimelineItem(BaseSchema):
 class EditResultResponse(BaseSchema):
     video_output_id: int
     render_status: RenderStatus
-    # ⚠️ 실제 렌더링 진행률이 아니라 상태에서 매핑한 근사값이다
+    # AI가 실제 값을 주면 그 값, 없으면(placeholder 등) 상태 기반 근사값(2026-08-27)
     progress_percent: int
+    # AI 편집 단계 원문(PREPARING_VIDEO_CONTEXT 등). 없으면 null — "영상 준비 중"
+    # 같은 세부 안내에 쓸 수 있다(2026-08-27 추가).
+    stage: str | None = None
     preview_video_url: str | None
     timeline_summary: list[TimelineItem]
     # render_status가 SOURCE_GAP일 때만 채워진다(`docs/AI_연동_입출력.md` 21번).
     # 그 외에는 항상 null이다.
     missing_scene_roles: list[str] | None = None
     available_options: list[str] | None = None
+    # render_status가 FAILED일 때만 채워진다(2026-08-27 추가). AI가 준 실패 사유
+    # 원문이라 사용자에게 그대로 보여주기보다는 문의·로그용으로 쓰는 걸 권장한다.
+    error_message: str | None = None
 
 
 class ReviseRequestType(StrEnum):

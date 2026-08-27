@@ -225,14 +225,17 @@ def test_edit_result_returns_spec_fields(
         "video_output_id",
         "render_status",
         "progress_percent",
+        "stage",
         "preview_video_url",
         "timeline_summary",
         "missing_scene_roles",
         "available_options",
+        "error_message",
     }
     assert body["progress_percent"] == 0  # PENDING
     assert body["missing_scene_roles"] is None  # SOURCE_GAP 전용, 평소엔 null
     assert body["available_options"] is None
+    assert body["error_message"] is None  # FAILED 전용, 평소엔 null
     assert set(body["timeline_summary"][0]) == {"scene_order", "duration_sec", "effect"}
 
 
@@ -319,6 +322,105 @@ def test_result_returns_latest_version(
 
     assert result["video_output_id"] == revised_id
     assert result["progress_percent"] == 50  # PROCESSING
+
+
+def test_result_reflects_real_ai_progress(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AI가 실제 진행률을 주면 상태 기반 근사값(50) 대신 그 값을 써야 한다 (2026-08-27)."""
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    output_id = _start_edit(client, auth_headers, project_id).json()["video_output_id"]
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(
+            run_id=run_id, status="RUNNING", stage="RENDERING", progress=73
+        ),
+    )
+
+    result = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert result["progress_percent"] == 73
+    assert result["stage"] == "RENDERING"
+
+    output = db_session.get(VideoOutput, output_id)
+    assert output.render_progress == 73
+    assert output.render_stage == "RENDERING"
+
+
+def test_result_updates_progress_within_same_status(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """상태(RUNNING)가 안 바뀌어도, 그 안의 진행률 변화는 매 폴링마다 반영돼야 한다."""
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    _start_edit(client, auth_headers, project_id)
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(run_id=run_id, status="RUNNING", progress=20),
+    )
+    first = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(run_id=run_id, status="RUNNING", progress=85),
+    )
+    second = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert first["progress_percent"] == 20
+    assert second["progress_percent"] == 85
+
+
+def test_result_stores_error_message_on_failure(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FAILED가 되면 AI가 준 실패 사유를 저장해서 조회할 수 있어야 한다 (2026-08-27).
+
+    실제 장애(project 56/50)를 진단하다가, AI가 응답에 실어주는 `error_message`를
+    지금까지 통째로 버리고 있어 DB 어디에도 실패 이유가 안 남는 걸 발견했다.
+    """
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    output_id = _start_edit(client, auth_headers, project_id).json()["video_output_id"]
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(
+            run_id=run_id,
+            status="FAILED",
+            stage="FAILED",
+            progress=80,
+            error_message="RendererError: recipe 검증 실패",
+        ),
+    )
+
+    result = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert result["render_status"] == "FAILED"
+    assert result["error_message"] == "RendererError: recipe 검증 실패"
+
+    output = db_session.get(VideoOutput, output_id)
+    assert output.error_message == "RendererError: recipe 검증 실패"
 
 
 def test_revise_rejects_unknown_request_type(
