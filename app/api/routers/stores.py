@@ -18,6 +18,7 @@ from app.schemas.store import (
     MenuCreateRequest,
     MenuCreateResponse,
     MenuListResponse,
+    MenuResponse,
     MenuUpdateRequest,
     MenuUpdateResponse,
     PhotoCategory,
@@ -98,6 +99,8 @@ def create_store(
 
     검색 단계에서 카카오 플레이스 링크가 잡혀 있으면, 응답을 내보낸 뒤
     백그라운드로 대표 메뉴 몇 개를 자동으로 채운다(실패해도 등록에는 영향 없음).
+    상권분석도 같은 방식으로 백그라운드에서 미리 만들어 캐시해둔다(2026-08-27) —
+    인사이트 화면(3.5)은 이렇게 저장된 값만 조회하고 그 자리에서 AI를 부르지 않는다.
     """
     store = store_service.create_store(db, user, payload)
 
@@ -110,6 +113,8 @@ def create_store(
         background_tasks.add_task(
             menu_crawl_service.enrich_menu_from_kakao, store.id, place_id, SessionLocal
         )
+
+    background_tasks.add_task(insight_service.generate_trade_area_insight, store.id, SessionLocal)
 
     status = store_service.get_import_status(db, store)
     return StoreCreateResponse(
@@ -165,10 +170,30 @@ def update_store(
 # ---------------------------------------------------------------- 3.2 대표메뉴
 
 
+def _menu_response(storage: Storage, menu: object) -> MenuResponse:
+    """DB에는 저장소 키가 들어있을 수 있으므로(3.6 로고와 같은 이유) 응답에서
+    전체 URL로 바꿔 내보낸다. 지금까지 이 변환이 빠져 있어(2026-08-27 FE 리포트),
+    저장은 되는데 조회한 값으로는 이미지에 접근할 수 없는 문제가 있었다.
+    """
+    return MenuResponse(
+        id=menu.id,
+        name=menu.name,
+        price=menu.price,
+        description=menu.description,
+        image_url=to_public_url(storage, menu.image_url),
+        is_new_menu=menu.is_new_menu,
+        is_event_menu=menu.is_event_menu,
+        is_sold_out=menu.is_sold_out,
+    )
+
+
 @router.get("/{store_id}/menus", response_model=MenuListResponse)
-def list_menus(store_id: int, user: CurrentUser, db: DbSession) -> MenuListResponse:
+def list_menus(
+    store_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> MenuListResponse:
     store = store_service.get_owned_store(db, user, store_id)
-    return MenuListResponse(menus=menu_service.list_menus(db, store))
+    menus = menu_service.list_menus(db, store)
+    return MenuListResponse(menus=[_menu_response(storage, menu) for menu in menus])
 
 
 @router.post("/{store_id}/menus", response_model=MenuCreateResponse, status_code=HTTPStatus.CREATED)
@@ -185,13 +210,21 @@ def create_menu(
     response_model_exclude_unset=True,
 )
 def update_menu(
-    store_id: int, menu_id: int, payload: MenuUpdateRequest, user: CurrentUser, db: DbSession
+    store_id: int,
+    menu_id: int,
+    payload: MenuUpdateRequest,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
 ) -> MenuUpdateResponse:
     store = store_service.get_owned_store(db, user, store_id)
     menu = menu_service.get_menu(db, store, menu_id)
     changed = set(payload.model_dump(exclude_unset=True))
     menu = menu_service.update_menu(db, menu, payload)
-    return _changed_only(MenuUpdateResponse, menu, changed)
+    response = _changed_only(MenuUpdateResponse, menu, changed)
+    if response.image_url is not None:
+        response.image_url = to_public_url(storage, response.image_url)
+    return response
 
 
 @router.delete("/{store_id}/menus/{menu_id}", response_model=MessageResponse)

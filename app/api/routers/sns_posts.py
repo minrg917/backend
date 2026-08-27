@@ -11,6 +11,8 @@ from app.schemas.performance import (
     ComparisonResponse,
     MetricItem,
     MetricListResponse,
+    PlatformWeeklyTotal,
+    WeeklySummaryResponse,
 )
 from app.schemas.sns import SnsPostLinkRequest, SnsPostLinkResponse, SnsPostResponse
 from app.services import performance as perf_service
@@ -50,6 +52,32 @@ def compare_posts(
             )
             for post, view_rate, save_rate, days, confidence in rows
         ]
+    )
+
+
+@router.get("/weekly-summary", response_model=WeeklySummaryResponse)
+def get_weekly_summary(
+    user: CurrentUser,
+    db: DbSession,
+    store_id: Annotated[int, Query(description="조회할 가게 ID")],
+) -> WeeklySummaryResponse:
+    """플랫폼별 "이번 주(월~일, KST) 신규 조회수·좋아요 합산"을 돌려준다.
+
+    마이페이지 인사이트의 총합 카드용이다. 영상 개별 지표는 17.1, 여러 영상
+    비교는 17.2를 쓰고, 이건 "이번 주에 이 가게 콘텐츠가 전체적으로 얼마나
+    반응을 얻었는지" 한눈에 보는 용도다.
+
+    **경로가 `/{postId}`보다 먼저 선언돼야 한다** — `/compare`와 같은 이유로,
+    뒤에 두면 `weekly-summary`가 `postId`로 해석돼 422가 난다.
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    week_start, rows = perf_service.weekly_summary(db, store)
+    return WeeklySummaryResponse(
+        week_start=week_start,
+        platforms=[
+            PlatformWeeklyTotal(platform=platform, weekly_views=views, weekly_likes=likes)
+            for platform, views, likes in rows
+        ],
     )
 
 

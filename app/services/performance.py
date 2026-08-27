@@ -1,6 +1,6 @@
-"""성과분석 로직 (API명세서 17.1 지표 조회 / 17.2 성과 비교)."""
+"""성과분석 로직 (API명세서 17.1 성과지표 / 17.2 성과 비교 / 17.3 주간 총합)."""
 
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,12 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.models.mixins import utcnow
 from app.models.shorts_project import ShortsProject
-from app.models.sns import SnsPost, SnsPostMetric
+from app.models.sns import PostStatus, SnsPost, SnsPostMetric
 from app.models.store import Store
 from app.models.video_output import VideoOutput
 
-# 비교에 쓰는 지표 이름. 플랫폼마다 주는 이름이 달라도 수집 단계에서 이 이름으로 맞춘다.
+# 비교·주간합산에 쓰는 지표 이름. 플랫폼마다 주는 이름이 달라도 수집 단계에서 이 이름으로 맞춘다.
 METRIC_VIEWS = "views"
+METRIC_LIKES = "likes"
 METRIC_REACH = "reach"
 METRIC_SAVES = "saves"
 
@@ -22,6 +23,11 @@ MIN_SAMPLE_SIZE = 3
 
 # 게시 직후에는 지표가 계속 오르는 중이라 확정된 값이 아니다.
 _CONFIDENCE_DAYS = ((7, "낮음"), (30, "보통"))
+
+# 17.3 주간 합산 대상 플랫폼·지표. 연동 자체가 이 둘만 지원된다(2026-08-24 확정).
+_SUPPORTED_PLATFORMS = ("INSTAGRAM", "YOUTUBE")
+_WEEKLY_METRICS = (METRIC_VIEWS, METRIC_LIKES)
+_KST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------- 17.1 지표 조회
@@ -168,3 +174,89 @@ def confidence_of(days: int, sample_size: int) -> str:
         if days < threshold:
             return label
     return "높음"
+
+
+# ---------------------------------------------------------------- 17.3 주간 총합
+
+
+def _week_start_utc(now: datetime) -> datetime:
+    """이번 주 월요일 00:00(KST)을 naive UTC로 돌려준다.
+
+    `collected_at`이 naive UTC로 저장돼 있어 비교 기준도 맞춰야 한다. KST로 계산하는
+    이유는 "이번 주"가 사장님이 체감하는 한국 시간 기준 월요일이어야 하기 때문이다
+    — UTC 그대로 쓰면 한국 시간 월요일 오전이 아직 "지난주 일요일"로 계산된다.
+    """
+    now_kst = now.replace(tzinfo=UTC).astimezone(_KST)
+    monday_kst = (now_kst - timedelta(days=now_kst.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return monday_kst.astimezone(UTC).replace(tzinfo=None)
+
+
+def _linked_post_ids(db: Session, store: Store, platform: str) -> list[int]:
+    return list(
+        db.scalars(
+            select(SnsPost.id)
+            .join(VideoOutput, VideoOutput.id == SnsPost.video_output_id)
+            .join(ShortsProject, ShortsProject.id == VideoOutput.shorts_project_id)
+            .where(
+                ShortsProject.store_id == store.id,
+                SnsPost.post_platform == platform,
+                SnsPost.post_status == PostStatus.LINKED,
+            )
+        )
+    )
+
+
+def _values_before(
+    db: Session, post_ids: list[int], before: datetime
+) -> dict[int, dict[str, Decimal]]:
+    """게시물별 지표의 `before` 이전 마지막 값. `latest_values`와 같은 방식에 상한만 둔다."""
+    if not post_ids:
+        return {}
+    rows = db.scalars(
+        select(SnsPostMetric)
+        .where(SnsPostMetric.sns_post_id.in_(post_ids), SnsPostMetric.collected_at < before)
+        .order_by(SnsPostMetric.collected_at, SnsPostMetric.id)
+    )
+    values: dict[int, dict[str, Decimal]] = {}
+    for row in rows:
+        if row.metric_value is None:
+            continue
+        values.setdefault(row.sns_post_id, {})[row.metric_name] = row.metric_value
+    return values
+
+
+def weekly_summary(
+    db: Session, store: Store
+) -> tuple[datetime, list[tuple[str, Decimal, Decimal]]]:
+    """가게의 플랫폼별 "이번 주(월~일, KST) 신규 조회수·좋아요 합산"을 계산한다 (API명세서 17.3).
+
+    **플랫폼 API는 영상 하나짜리 누적 총합만 준다** — "이번 주에 새로 늘어난 양"은
+    직접 안 준다. 그래서 영상마다 (지금 누적 − 이번 주 시작 전 마지막 누적)으로
+    이번 주 증가분을 구하고, 그 가게의 그 플랫폼 영상 전부를 더한다. 이번 주에
+    새로 연결된 영상은 시작 전 값이 없으니 0으로 보고, 지금 누적값 전부가 그대로
+    이번 주 증가분이 된다.
+
+    단순히 지금 시점 누적 총합을 다 더하지 않는 이유는, 그러면 "이번 주"라는
+    이름과 달리 오래된 영상의 평생 누적치까지 다 섞여 들어가기 때문이다.
+
+    (이번 주 시작 시각, [플랫폼별 (플랫폼, 이번 주 총 조회수, 이번 주 총 좋아요)])를
+    돌려준다 — 연결된 게시물이 없어도 0으로 채워 항상 두 플랫폼 다 나온다.
+    """
+    week_start = _week_start_utc(utcnow())
+    results: list[tuple[str, Decimal, Decimal]] = []
+    for platform in _SUPPORTED_PLATFORMS:
+        post_ids = _linked_post_ids(db, store, platform)
+        latest = latest_values(db, post_ids)
+        baseline = _values_before(db, post_ids, week_start)
+
+        totals = dict.fromkeys(_WEEKLY_METRICS, Decimal(0))
+        for post_id in post_ids:
+            for metric in _WEEKLY_METRICS:
+                latest_v = latest.get(post_id, {}).get(metric, Decimal(0))
+                baseline_v = baseline.get(post_id, {}).get(metric, Decimal(0))
+                totals[metric] += max(latest_v - baseline_v, Decimal(0))
+
+        results.append((platform, totals[METRIC_VIEWS], totals[METRIC_LIKES]))
+    return week_start, results

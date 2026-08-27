@@ -212,6 +212,58 @@ def test_menu_of_another_store_is_not_reachable(
     assert response.json()["error_code"] == "MENU_NOT_FOUND"
 
 
+def test_list_menus_signs_stored_image_key(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """저장된 값이 저장소 키(255자 제한 때문에 3.3 업로드가 아니라 키만 저장됨)면
+    조회 시 전체 URL로 바꿔서 내려줘야 한다 (2026-08-27 FE 리포트 — 지금까지
+    키를 그대로 돌려줘서 그 값으로 이미지에 접근하면 403이 났다).
+    """
+    menu_id = _create_menu(client, auth_headers, store_id).json()["id"]
+    client.patch(
+        f"/stores/{store_id}/menus/{menu_id}",
+        json={"image_url": "stores/1/menus/abc123.jpg"},
+        headers=auth_headers,
+    )
+
+    menu = client.get(f"/stores/{store_id}/menus", headers=auth_headers).json()["menus"][0]
+
+    assert menu["image_url"].startswith("http://")
+    assert menu["image_url"].endswith("stores/1/menus/abc123.jpg")
+
+
+def test_patch_menu_response_signs_image_url(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """PATCH 응답 자체도 서명된 URL을 돌려줘야 한다 — GET을 다시 안 불러도 되게."""
+    menu_id = _create_menu(client, auth_headers, store_id).json()["id"]
+
+    response = client.patch(
+        f"/stores/{store_id}/menus/{menu_id}",
+        json={"image_url": "stores/1/menus/abc123.jpg"},
+        headers=auth_headers,
+    )
+
+    assert response.json()["image_url"].startswith("http://")
+
+
+def test_menu_image_url_passes_through_external_url_unchanged(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """카카오·네이버가 준 외부 URL은 이미 절대 URL이라 그대로 통과해야 한다."""
+    menu_id = _create_menu(client, auth_headers, store_id).json()["id"]
+    external_url = "https://img1.kakaocdn.net/menu/abc.jpg"
+
+    client.patch(
+        f"/stores/{store_id}/menus/{menu_id}",
+        json={"image_url": external_url},
+        headers=auth_headers,
+    )
+
+    menu = client.get(f"/stores/{store_id}/menus", headers=auth_headers).json()["menus"][0]
+    assert menu["image_url"] == external_url
+
+
 def test_menu_price_cannot_be_negative(
     client: TestClient, auth_headers: dict[str, str], store_id: int
 ) -> None:
@@ -329,6 +381,7 @@ def test_list_insights_returns_spec_fields(
         "insight_title",
         "insight_content",
         "insight_source",
+        "insight_data",
         "generated_at",
     }
     assert body["insights"][0]["generated_at"].endswith("Z")
@@ -365,6 +418,86 @@ def test_insights_hidden_from_other_user(
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "STORE_NOT_FOUND"
+
+
+# ---------------------------------------------------------------- 3.5 상권분석 생성 (2026-08-27)
+
+
+def test_trade_area_insight_placeholder_does_not_fabricate(db_session: Session) -> None:
+    """AI 연동 전에는 나이·성별 분포를 지어내지 않는다 — 실제 통계 주장이라서다."""
+    from app.services import ai_client
+
+    insight = ai_client.get_trade_area_insight(
+        type("FakeStore", (), {"name": "행복분식", "category": "분식"})()
+    )
+
+    assert insight.district_name is None
+    assert insight.summary is None
+    assert insight.age_distribution is None
+    assert insight.gender_distribution is None
+
+
+def test_generate_trade_area_insight_saves_when_ai_provides_data(
+    db_session: Session, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import ai_client
+    from app.services import store_insight as insight_service
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_trade_area_insight",
+        lambda store: ai_client.TradeAreaInsight(
+            district_name="샤로수길",
+            summary="20대 초중반이 많이 찾는 활기찬 청년 상권입니다.",
+            age_distribution={"20s": 55, "30s": 45},
+            gender_distribution={"male": 40, "female": 60},
+        ),
+    )
+
+    insight_service.generate_trade_area_insight(store_id, lambda: db_session)
+
+    saved = db_session.query(StoreInsight).filter(StoreInsight.store_id == store_id).one()
+    assert saved.insight_type == "상권분석"
+    assert saved.insight_title == "샤로수길"
+    assert saved.insight_content == "20대 초중반이 많이 찾는 활기찬 청년 상권입니다."
+    assert saved.insight_source is None  # 여러 출처를 종합한 결과라 분류하지 않는다
+    assert saved.insight_data == {
+        "age_distribution": {"20s": 55, "30s": 45},
+        "gender_distribution": {"male": 40, "female": 60},
+    }
+
+
+def test_generate_trade_area_insight_skips_when_nothing_to_save(
+    db_session: Session, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI가 placeholder처럼 전부 None을 주면 빈 행을 만들지 않는다."""
+    from app.services import ai_client
+    from app.services import store_insight as insight_service
+
+    monkeypatch.setattr(
+        ai_client, "get_trade_area_insight", lambda store: ai_client.TradeAreaInsight()
+    )
+
+    insight_service.generate_trade_area_insight(store_id, lambda: db_session)
+
+    assert db_session.query(StoreInsight).filter(StoreInsight.store_id == store_id).count() == 0
+
+
+def test_generate_trade_area_insight_silently_ignores_errors(
+    db_session: Session, store_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실패해도 예외가 밖으로 새면 안 된다 — 백그라운드 작업이라 아무도 못 본다."""
+    from app.services import ai_client
+    from app.services import store_insight as insight_service
+
+    def boom(store: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ai_client, "get_trade_area_insight", boom)
+
+    insight_service.generate_trade_area_insight(store_id, lambda: db_session)
+
+    assert db_session.query(StoreInsight).filter(StoreInsight.store_id == store_id).count() == 0
 
 
 def test_list_includes_hidden_targets(

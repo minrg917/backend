@@ -3,6 +3,7 @@
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -444,6 +445,77 @@ def test_linked_post_feeds_performance(
     ).json()
 
     assert [i["sns_post_id"] for i in body["comparison"]] == [post_id]
+
+
+def test_link_post_triggers_immediate_metrics_collection(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    output_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """16.3 연결확정 직후, 하루짜리 배치를 기다리지 않고 바로 지표가 보여야 한다 (2026-08-27)."""
+    monkeypatch.setattr(
+        sns_oauth, "exchange_code", lambda *a, **k: _fake_tokens(expires_in=90 * 24 * 3600)
+    )
+    state = create_oauth_state(_user_id(client, auth_headers), "INSTAGRAM")
+    client.get(f"/sns-connections/callback?code=abc&state={state}")
+    connection_id = client.get("/sns-connections", headers=auth_headers).json()["connections"][0][
+        "id"
+    ]
+
+    post_id = client.post(
+        f"/video-outputs/{output_id}/publish",
+        json={"platform": "INSTAGRAM", "sns_connection_id": connection_id},
+        headers=auth_headers,
+    ).json()["sns_post_id"]
+
+    def fake_get(url: str, params: dict[str, Any], timeout: float) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"name": "views", "values": [{"value": 500}]}]},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    client.patch(f"/sns-posts/{post_id}", json={"external_post_id": "ext-1"}, headers=auth_headers)
+
+    body = client.get(f"/sns-posts/{post_id}/metrics", headers=auth_headers).json()
+    assert len(body["metrics"]) == 1
+    assert body["metrics"][0]["metric_name"] == "views"
+    assert body["metrics"][0]["metric_value"] == 500
+
+
+def test_link_post_succeeds_even_if_immediate_collection_fails(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    output_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """즉시 수집은 부가 기능이라, 실패해도 16.3 연결확정 자체는 성공해야 한다."""
+    monkeypatch.setattr(sns_oauth, "exchange_code", lambda *a, **k: _fake_tokens(expires_in=3600))
+    state = create_oauth_state(_user_id(client, auth_headers), "INSTAGRAM")
+    client.get(f"/sns-connections/callback?code=abc&state={state}")
+    connection_id = client.get("/sns-connections", headers=auth_headers).json()["connections"][0][
+        "id"
+    ]
+    post_id = client.post(
+        f"/video-outputs/{output_id}/publish",
+        json={"platform": "INSTAGRAM", "sns_connection_id": connection_id},
+        headers=auth_headers,
+    ).json()["sns_post_id"]
+
+    def fake_get(url: str, params: dict[str, Any], timeout: float) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    response = client.patch(
+        f"/sns-posts/{post_id}", json={"external_post_id": "ext-1"}, headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["post_status"] == "LINKED"
 
 
 def test_sns_post_routes_not_shadowed(
