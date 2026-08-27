@@ -56,6 +56,7 @@ def _request_json(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    query_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """AI 내부 API를 호출하고 안전한 도메인 오류로 변환한다.
 
@@ -70,6 +71,7 @@ def _request_json(
             url,
             headers=headers,
             json=json_body,
+            params=query_params,
             timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
         )
     except httpx.RequestError as exc:
@@ -116,6 +118,21 @@ def _map_face_exposure(value: str | None) -> str:
     안 된 얼굴을 노출시키는 쪽보다 안전하게 "not_allowed"로 떨어뜨린다.
     """
     return _FACE_EXPOSURE_TOKENS.get(value or "", "not_allowed")
+
+
+def _promotion_subject_name(
+    project: ShortsProject,
+    store: Store,
+    menu_name: str | None,
+) -> str:
+    if menu_name:
+        return menu_name
+    detail = project.promotion_detail or {}
+    for key in ("name", "title", "event_name", "subject"):
+        value = str(detail.get(key) or "").strip()
+        if value:
+            return value
+    return project.project_title or store.name
 
 
 def _option(item: dict[str, Any]) -> "SessionOption":
@@ -288,7 +305,11 @@ def _with_default_guide_type(guide: dict[str, Any] | None) -> dict[str, Any] | N
 
 
 def get_shooting_guide(
-    video_format: VideoFormat, store: Store, project: ShortsProject
+    video_format: VideoFormat,
+    store: Store,
+    project: ShortsProject,
+    *,
+    menu_name: str | None = None,
 ) -> ShootingGuide:
     """포맷(영상편집템플릿)에 고정된 촬영 가이드를 가져온다.
 
@@ -305,7 +326,6 @@ def get_shooting_guide(
     if not is_enabled():
         return _placeholder_shooting_guide(video_format)
 
-    del store, project  # 현재 AI 조회 계약은 템플릿 id와 버전만 받는다.
     if video_format.editing_template_id is None or video_format.editing_template_version is None:
         # 5.1과 R06은 같은 템플릿 카탈로그를 쓰기로 확인됐다(2026-08-26). 그런데도
         # 이 값이 없다면 5.1이 옛(레거시) 방식으로 적재된 행이라는 뜻이다.
@@ -319,18 +339,31 @@ def get_shooting_guide(
             f"/api/v1/editing-templates/{video_format.editing_template_id}"
             f"/versions/{video_format.editing_template_version}/shooting-guide"
         ),
+        query_params={
+            "store_name": store.name,
+            "business_type": store.sub_category or store.category,
+            "promotion_subject": _promotion_subject_name(project, store, menu_name),
+            "promotion_objective": str(project.promotion_purpose or ""),
+            "menu_name": menu_name,
+            "face_exposure": _map_face_exposure(project.face_exposure_mode),
+        },
     )
-    scenes = [
-        PlannedScene(
-            scene_order=int(item.get("scene_order") or index),
-            scene_description=str(item.get("scene_description") or "촬영 장면"),
-            scene_dialogue=item.get("scene_dialogue"),
-            scene_subtitle=item.get("scene_subtitle"),
-            shot_type=item.get("shot_type"),
-            target_duration_sec=item.get("target_duration_sec"),
+    scenes = []
+    for index, item in enumerate(data.get("scenes") or [], start=1):
+        dialogue = item.get("scene_dialogue")
+        if dialogue is not None and len(str(dialogue)) > 9:
+            logger.error("AI 촬영 가이드 계약 위반: scene_dialogue 9자 초과")
+            raise AIServiceUnavailable
+        scenes.append(
+            PlannedScene(
+                scene_order=int(item.get("scene_order") or index),
+                scene_description=str(item.get("scene_description") or "촬영 장면"),
+                scene_dialogue=str(dialogue) if dialogue is not None else None,
+                scene_subtitle=item.get("scene_subtitle"),
+                shot_type=item.get("shot_type"),
+                target_duration_sec=item.get("target_duration_sec"),
+            )
         )
-        for index, item in enumerate(data.get("scenes") or [], start=1)
-    ]
     tasks: list[PlannedTask] = []
     for index, item in enumerate(data.get("tasks") or [], start=1):
         scene_index = item.get("scene_index")
@@ -486,6 +519,9 @@ class EditingRun:
     stage: str | None = None
     progress: int | None = None
     error_message: str | None = None
+    queue_position: int | None = None
+    estimated_wait_sec: int | None = None
+    stage_elapsed_sec: int | None = None
 
 
 @dataclass(frozen=True)
@@ -508,6 +544,7 @@ class EditingRunResult:
     publishing: PublishKit | None = None
     missing_scene_roles: list[str] | None = None
     available_options: list[str] | None = None
+    warnings: list[str] | None = None
     is_placeholder: bool = False
 
 
@@ -519,6 +556,19 @@ def _editing_run_from_json(data: dict[str, Any]) -> EditingRun:
         stage=data.get("stage"),
         progress=data.get("progress"),
         error_message=data.get("error_message"),
+        queue_position=(
+            int(data["queue_position"]) if data.get("queue_position") is not None else None
+        ),
+        estimated_wait_sec=(
+            int(data["estimated_wait_sec"])
+            if data.get("estimated_wait_sec") is not None
+            else None
+        ),
+        stage_elapsed_sec=(
+            int(data["stage_elapsed_sec"])
+            if data.get("stage_elapsed_sec") is not None
+            else None
+        ),
     )
 
 
@@ -634,6 +684,7 @@ def get_editing_run_result(run_id: str) -> EditingRunResult:
         publishing=publishing,
         missing_scene_roles=list(data.get("missing_scene_roles") or []),
         available_options=list(data.get("available_options") or []),
+        warnings=list(data.get("warnings") or []),
     )
 
 

@@ -8,9 +8,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.shooting_task import ShootingTask
 from app.models.video_format import VideoFormat
 from app.models.video_output import VideoOutput
+from app.services import video_edit
 
 MP4_BYTES = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
 
@@ -19,6 +21,56 @@ STORE_BODY: dict[str, Any] = {
     "category": "분식",
     "address": "서울 강남구 테헤란로 1길 10",
 }
+
+
+def test_renderer_download_uses_internal_auth_and_persists_cover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    saved: dict[str, bytes] = {}
+
+    class FakeResponse:
+        headers = {"content-type": "video/mp4"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield MP4_BYTES
+
+    class FakeStorage:
+        def save(self, key, stream, content_type=None):
+            del content_type
+            saved[key] = stream.read()
+            return key
+
+    def fake_stream(method, url, **kwargs):
+        captured.update(method=method, url=url, **kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://renderer.internal:8000")
+    monkeypatch.setattr(settings, "AI_SERVER_API_KEY", "shared-secret")
+    monkeypatch.setattr(video_edit.httpx, "stream", fake_stream)
+    monkeypatch.setattr(video_edit, "get_storage", lambda: FakeStorage())
+    monkeypatch.setattr(
+        video_edit,
+        "_generate_cover",
+        lambda storage, source_path, cover_key: cover_key,
+    )
+
+    video_key, cover_key = video_edit._persist_rendered_video(
+        10, "http://renderer.internal:8080/files/result.mp4"
+    )
+
+    assert saved[video_key] == MP4_BYTES
+    assert cover_key.endswith(".jpg")
+    assert captured["headers"] == {"X-Internal-API-Key": "shared-secret"}
 
 
 @pytest.fixture
@@ -226,11 +278,15 @@ def test_edit_result_returns_spec_fields(
         "render_status",
         "progress_percent",
         "stage",
+        "queue_position",
+        "estimated_wait_sec",
+        "stage_elapsed_sec",
         "preview_video_url",
         "timeline_summary",
         "missing_scene_roles",
         "available_options",
         "error_message",
+        "warnings",
     }
     assert body["progress_percent"] == 0  # PENDING
     assert body["missing_scene_roles"] is None  # SOURCE_GAP 전용, 평소엔 null

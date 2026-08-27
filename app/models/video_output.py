@@ -76,6 +76,18 @@ class VideoOutput(Base, TimestampMixin):
     available_options: Mapped[list[str] | None] = mapped_column(
         JSON, nullable=True, comment="선택 가능한 대응 옵션(SOURCE_GAP 전용)"
     )
+    warnings: Mapped[list[str] | None] = mapped_column(
+        JSON, nullable=True, comment="렌더는 완료됐지만 사용자에게 알릴 비차단 경고"
+    )
+    queue_position: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="AI 편집 대기열 순번(실행 중은 0)"
+    )
+    estimated_wait_sec: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="AI가 추정한 대기시간(초)"
+    )
+    stage_elapsed_sec: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="현재 AI 단계 경과시간(초)"
+    )
     # 편집 완료 푸시 알림(2026-08-26)을 이미 보냈는지. 완료 감시 타이머가 매번
     # 도는데, 이 값이 없으면 같은 산출물에 계속 알림을 다시 보내게 된다.
     push_notified_at: Mapped[datetime | None] = mapped_column(
