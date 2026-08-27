@@ -16,10 +16,17 @@ import httpx
 
 from app.core.config import settings
 from app.core.exceptions import AppError, BadRequestError
+from app.models.sns import SnsConnection
 
 # 콜백 경로. 플랫폼 개발자 콘솔에 등록한 리디렉션 URI와 **정확히** 같아야 한다 —
 # 한 글자만 달라도 플랫폼이 리다이렉트를 거부한다.
 CALLBACK_PATH = "/sns-connections/callback"
+
+# Instagram 장기 토큰 교환/갱신 엔드포인트. 최초 교환(token_url)이 돌려주는 건
+# 1시간짜리 단기 토큰이라, 성과 수집(R17)이 쓰려면 여기서 60일짜리로 한 번 더
+# 바꿔야 한다(2026-08-27, R17 성과 수집기 설계 중 발견).
+_IG_EXCHANGE_URL = "https://graph.instagram.com/access_token"
+_IG_REFRESH_URL = "https://graph.instagram.com/refresh_access_token"
 
 
 class UnsupportedPlatform(BadRequestError):
@@ -155,12 +162,99 @@ def exchange_code(platform: PlatformOAuth, code: str) -> OAuthTokens:
     if not access_token:
         raise SnsAuthFailed
 
+    expires_in = body.get("expires_in")
+    if platform.platform == "INSTAGRAM":
+        # 방금 받은 건 1시간짜리 단기 토큰이다. 성과 수집기가 매일 도는데 그때마다
+        # 재로그인을 요구할 수 없으니, 여기서 바로 60일짜리로 바꿔서 저장한다.
+        access_token, expires_in = _exchange_long_lived_instagram_token(
+            platform.client_secret, access_token
+        )
+
     return OAuthTokens(
         access_token=access_token,
         refresh_token=body.get("refresh_token"),
-        expires_in=body.get("expires_in"),
+        expires_in=expires_in,
         # 계정 이름은 플랫폼마다 다른 곳에 있고, 없으면 별도 호출이 필요하다.
         # 지금은 토큰 응답에 실려 오는 경우만 취하고 없으면 비워둔다 —
         # 목록(16.1)에서 구분용으로 쓰는 값이라 없어도 동작에 지장이 없다.
         account_name=body.get("username") or body.get("user_id"),
     )
+
+
+def _exchange_long_lived_instagram_token(
+    client_secret: str, short_lived_token: str
+) -> tuple[str, int | None]:
+    try:
+        response = httpx.get(
+            _IG_EXCHANGE_URL,
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": client_secret,
+                "access_token": short_lived_token,
+            },
+            timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        body = response.json()
+        access_token = body["access_token"]
+    except (httpx.HTTPError, ValueError, KeyError) as error:
+        raise SnsAuthFailed from error
+    return access_token, body.get("expires_in")
+
+
+def refresh_access_token(platform: PlatformOAuth, connection: SnsConnection) -> OAuthTokens:
+    """만료가 가까운 토큰을 갱신한다 (R17 성과 수집기용, 2026-08-27).
+
+    플랫폼마다 갱신 방식이 전혀 다르다.
+
+    - **Instagram**: 별도 refresh_token이 없다. 장기 토큰 자신을 `ig_refresh_token`으로
+      다시 발급받는 방식이고, 유효기간이 다시 60일로 늘어난다. 발급 후 24시간이
+      지난 토큰만 갱신할 수 있다.
+    - **YouTube**: 표준 OAuth `refresh_token` 그랜트. 구글은 갱신 응답에 새
+      refresh_token을 다시 안 주므로 기존 값을 그대로 들고 있어야 한다.
+    """
+    if platform.platform == "INSTAGRAM":
+        return _refresh_instagram_token(connection.access_token)
+    return _refresh_youtube_token(platform, connection.refresh_token)
+
+
+def _refresh_instagram_token(access_token: str | None) -> OAuthTokens:
+    if not access_token:
+        raise SnsAuthFailed
+    try:
+        response = httpx.get(
+            _IG_REFRESH_URL,
+            params={"grant_type": "ig_refresh_token", "access_token": access_token},
+            timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return OAuthTokens(access_token=body["access_token"], expires_in=body.get("expires_in"))
+    except (httpx.HTTPError, ValueError, KeyError) as error:
+        raise SnsAuthFailed from error
+
+
+def _refresh_youtube_token(platform: PlatformOAuth, refresh_token: str | None) -> OAuthTokens:
+    if not refresh_token:
+        raise SnsAuthFailed
+    try:
+        response = httpx.post(
+            platform.token_url,
+            data={
+                "client_id": platform.client_id,
+                "client_secret": platform.client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return OAuthTokens(
+            access_token=body["access_token"],
+            # 구글은 갱신 응답에 refresh_token을 다시 실어주지 않는다 — 기존 값 유지.
+            refresh_token=refresh_token,
+            expires_in=body.get("expires_in"),
+        )
+    except (httpx.HTTPError, ValueError, KeyError) as error:
+        raise SnsAuthFailed from error

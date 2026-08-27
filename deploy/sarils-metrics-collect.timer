@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect SNS post metrics once a day
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1d
+RandomizedDelaySec=60
+Persistent=true
+Unit=sarils-metrics-collect.service
+
+[Install]
+WantedBy=timers.target

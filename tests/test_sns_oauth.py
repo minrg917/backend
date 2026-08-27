@@ -1,0 +1,141 @@
+"""SNS OAuth 어댑터 단위 테스트 — 장기 토큰 교환·갱신 (R17 성과 수집기, 2026-08-27)."""
+
+from typing import Any
+
+import httpx
+import pytest
+
+from app.models.sns import SnsConnection
+from app.services import sns_oauth
+
+
+def _platform(platform: str, **overrides: Any) -> sns_oauth.PlatformOAuth:
+    defaults = sns_oauth._PLATFORMS[platform]
+    return sns_oauth.PlatformOAuth(
+        platform=platform,
+        client_id="client-id",
+        client_secret="client-secret",
+        **{**defaults, **overrides},
+    )
+
+
+def _response(json_body: dict[str, Any], status: int = 200) -> httpx.Response:
+    return httpx.Response(status, json=json_body, request=httpx.Request("GET", "https://x"))
+
+
+# ---------------------------------------------------------------- exchange_code
+
+
+def test_exchange_code_instagram_upgrades_to_long_lived_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """최초 교환은 1시간짜리 단기 토큰이라, Instagram은 반드시 장기 토큰으로 바꿔야 한다."""
+
+    def fake_post(url: str, data: dict[str, Any], timeout: float) -> httpx.Response:
+        return _response({"access_token": "short-lived", "user_id": "12345"})
+
+    def fake_get(url: str, params: dict[str, Any], timeout: float) -> httpx.Response:
+        assert url == sns_oauth._IG_EXCHANGE_URL
+        assert params["grant_type"] == "ig_exchange_token"
+        assert params["access_token"] == "short-lived"
+        return _response({"access_token": "long-lived", "expires_in": 5184000})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    tokens = sns_oauth.exchange_code(_platform("INSTAGRAM"), "auth-code")
+
+    assert tokens.access_token == "long-lived"
+    assert tokens.expires_in == 5184000
+
+
+def test_exchange_code_youtube_skips_long_lived_exchange(monkeypatch: pytest.MonkeyPatch) -> None:
+    """YouTube는 표준 OAuth라 별도 장기 토큰 교환이 없다 — 추가 호출이 없어야 한다."""
+
+    def fake_post(url: str, data: dict[str, Any], timeout: float) -> httpx.Response:
+        return _response(
+            {"access_token": "yt-token", "refresh_token": "yt-refresh", "expires_in": 3600}
+        )
+
+    def fake_get(*args: Any, **kwargs: Any) -> httpx.Response:
+        raise AssertionError("YouTube는 장기 토큰 교환 GET을 호출하면 안 된다")
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    tokens = sns_oauth.exchange_code(_platform("YOUTUBE"), "auth-code")
+
+    assert tokens.access_token == "yt-token"
+    assert tokens.refresh_token == "yt-refresh"
+
+
+def test_exchange_code_instagram_raises_when_long_lived_exchange_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_post(url: str, data: dict[str, Any], timeout: float) -> httpx.Response:
+        return _response({"access_token": "short-lived"})
+
+    def fake_get(url: str, params: dict[str, Any], timeout: float) -> httpx.Response:
+        return _response({"error": "boom"}, status=400)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(sns_oauth.SnsAuthFailed):
+        sns_oauth.exchange_code(_platform("INSTAGRAM"), "auth-code")
+
+
+# ---------------------------------------------------------------- refresh_access_token
+
+
+def test_refresh_instagram_calls_refresh_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_get(url: str, params: dict[str, Any], timeout: float) -> httpx.Response:
+        assert url == sns_oauth._IG_REFRESH_URL
+        assert params["grant_type"] == "ig_refresh_token"
+        assert params["access_token"] == "old-long-lived"
+        return _response({"access_token": "refreshed", "expires_in": 5184000})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    connection = SnsConnection(user_id=1, sns_platform="INSTAGRAM", access_token="old-long-lived")
+
+    tokens = sns_oauth.refresh_access_token(_platform("INSTAGRAM"), connection)
+
+    assert tokens.access_token == "refreshed"
+    assert tokens.expires_in == 5184000
+
+
+def test_refresh_instagram_without_token_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = SnsConnection(user_id=1, sns_platform="INSTAGRAM", access_token=None)
+
+    with pytest.raises(sns_oauth.SnsAuthFailed):
+        sns_oauth.refresh_access_token(_platform("INSTAGRAM"), connection)
+
+
+def test_refresh_youtube_uses_refresh_token_grant(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_post(url: str, data: dict[str, Any], timeout: float) -> httpx.Response:
+        captured["data"] = data
+        return _response({"access_token": "new-access"})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    connection = SnsConnection(
+        user_id=1, sns_platform="YOUTUBE", access_token="stale", refresh_token="yt-refresh"
+    )
+
+    tokens = sns_oauth.refresh_access_token(_platform("YOUTUBE"), connection)
+
+    assert captured["data"]["grant_type"] == "refresh_token"
+    assert captured["data"]["refresh_token"] == "yt-refresh"
+    assert tokens.access_token == "new-access"
+    # 구글은 갱신 응답에 refresh_token을 다시 안 준다 — 기존 값을 그대로 들고 있어야 한다.
+    assert tokens.refresh_token == "yt-refresh"
+
+
+def test_refresh_youtube_without_refresh_token_raises() -> None:
+    connection = SnsConnection(
+        user_id=1, sns_platform="YOUTUBE", access_token="stale", refresh_token=None
+    )
+
+    with pytest.raises(sns_oauth.SnsAuthFailed):
+        sns_oauth.refresh_access_token(_platform("YOUTUBE"), connection)
