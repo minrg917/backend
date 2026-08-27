@@ -27,20 +27,6 @@ ruff = "^0.8.0"
 pytest = "^8.3.0"
 httpx = "^0.28.0"
 
-# 가게 등록 시 카카오맵에서 대표 메뉴를 자동으로 가져오는 백그라운드 기능
-# (app/services/menu_crawl.py, scripts/crawl_kakao_menu.py) 전용. API 프로세스는
-# 이 그룹 없이도 뜬다 — 없으면 크롤링만 조용히 건너뛴다(menu_crawl.py의
-# FileNotFoundError 처리 참고). 배포 서버에서만 별도로 설치한다:
-#   poetry install --without dev --with crawler
-# Chrome 브라우저 자체는 poetry가 설치하지 못한다 — 서버에 따로 설치해야 한다
-# (deploy/README.md 참고).
-[tool.poetry.group.crawler]
-optional = true
-
-[tool.poetry.group.crawler.dependencies]
-selenium = "^4.27.0"
-webdriver-manager = "^4.0.2"
-
 [build-system]
 requires = ["poetry-core>=2.0.0"]
 build-backend = "poetry.core.masonry.api"

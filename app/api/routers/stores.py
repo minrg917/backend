@@ -18,6 +18,7 @@ from app.schemas.store import (
     MenuCreateRequest,
     MenuCreateResponse,
     MenuListResponse,
+    MenuResponse,
     MenuUpdateRequest,
     MenuUpdateResponse,
     PhotoCategory,
@@ -165,10 +166,30 @@ def update_store(
 # ---------------------------------------------------------------- 3.2 대표메뉴
 
 
+def _menu_response(storage: Storage, menu: object) -> MenuResponse:
+    """DB에는 저장소 키가 들어있을 수 있으므로(3.6 로고와 같은 이유) 응답에서
+    전체 URL로 바꿔 내보낸다. 지금까지 이 변환이 빠져 있어(2026-08-27 FE 리포트),
+    저장은 되는데 조회한 값으로는 이미지에 접근할 수 없는 문제가 있었다.
+    """
+    return MenuResponse(
+        id=menu.id,
+        name=menu.name,
+        price=menu.price,
+        description=menu.description,
+        image_url=to_public_url(storage, menu.image_url),
+        is_new_menu=menu.is_new_menu,
+        is_event_menu=menu.is_event_menu,
+        is_sold_out=menu.is_sold_out,
+    )
+
+
 @router.get("/{store_id}/menus", response_model=MenuListResponse)
-def list_menus(store_id: int, user: CurrentUser, db: DbSession) -> MenuListResponse:
+def list_menus(
+    store_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> MenuListResponse:
     store = store_service.get_owned_store(db, user, store_id)
-    return MenuListResponse(menus=menu_service.list_menus(db, store))
+    menus = menu_service.list_menus(db, store)
+    return MenuListResponse(menus=[_menu_response(storage, menu) for menu in menus])
 
 
 @router.post("/{store_id}/menus", response_model=MenuCreateResponse, status_code=HTTPStatus.CREATED)
@@ -185,13 +206,21 @@ def create_menu(
     response_model_exclude_unset=True,
 )
 def update_menu(
-    store_id: int, menu_id: int, payload: MenuUpdateRequest, user: CurrentUser, db: DbSession
+    store_id: int,
+    menu_id: int,
+    payload: MenuUpdateRequest,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
 ) -> MenuUpdateResponse:
     store = store_service.get_owned_store(db, user, store_id)
     menu = menu_service.get_menu(db, store, menu_id)
     changed = set(payload.model_dump(exclude_unset=True))
     menu = menu_service.update_menu(db, menu, payload)
-    return _changed_only(MenuUpdateResponse, menu, changed)
+    response = _changed_only(MenuUpdateResponse, menu, changed)
+    if response.image_url is not None:
+        response.image_url = to_public_url(storage, response.image_url)
+    return response
 
 
 @router.delete("/{store_id}/menus/{menu_id}", response_model=MessageResponse)
