@@ -33,6 +33,8 @@ jobs:
             sudo install -m 0644 deploy/sarils-trend-sync.timer /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-edit-notify.service /etc/systemd/system/
             sudo install -m 0644 deploy/sarils-edit-notify.timer /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-metrics-collect.service /etc/systemd/system/
+            sudo install -m 0644 deploy/sarils-metrics-collect.timer /etc/systemd/system/
             sudo systemctl daemon-reload
             # sarils-api를 먼저 재시작해 마이그레이션(alembic upgrade head, api의
             # ExecStartPre)이 끝나게 한 뒤 트렌드 동기화 타이머를 켠다. 순서가
@@ -48,3 +50,5 @@ jobs:
             sudo systemctl restart sarils-trend-sync.timer
             sudo systemctl enable sarils-edit-notify.timer
             sudo systemctl restart sarils-edit-notify.timer
+            sudo systemctl enable sarils-metrics-collect.timer
+            sudo systemctl restart sarils-metrics-collect.timer
