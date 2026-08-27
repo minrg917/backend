@@ -1,6 +1,6 @@
-"""성과분석 테스트 (API명세서 17.1 지표 조회 / 17.2 성과 비교)."""
+"""성과분석 테스트 (API명세서 17.1 지표 조회 / 17.2 성과 비교 / 17.3 주간 총합)."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.models.mixins import utcnow
 from app.models.shorts_project import ShortsProject
-from app.models.sns import SnsPost, SnsPostMetric
+from app.models.sns import PostStatus, SnsPost, SnsPostMetric
 from app.models.video_output import RenderStatus, VideoOutput
+from app.services.performance import _week_start_utc
 
 STORE_BODY: dict[str, Any] = {
     "name": "행복분식",
@@ -82,6 +83,30 @@ def _add_metric(
     db.add(metric)
     db.commit()
     return metric
+
+
+def _add_metric_at(
+    db: Session, post: SnsPost, name: str, value: str, when: datetime
+) -> SnsPostMetric:
+    """`_add_metric`과 달리 시각을 직접 지정한다 — 17.3 주간 경계 테스트용.
+
+    `days_ago`는 "지금부터 N일 전"이라 테스트를 언제 돌리느냐(요일)에 따라
+    이번 주/지난 주 경계에 걸치는 위치가 달라진다. 여기서는 실제 주 경계
+    (`_week_start_utc`)를 기준으로 명시적 시각을 준다.
+    """
+    metric = SnsPostMetric(
+        sns_post_id=post.id, metric_name=name, metric_value=Decimal(value), collected_at=when
+    )
+    db.add(metric)
+    db.commit()
+    return metric
+
+
+def _linked(db: Session, post: SnsPost) -> SnsPost:
+    post.post_status = PostStatus.LINKED
+    db.commit()
+    db.refresh(post)
+    return post
 
 
 # ---------------------------------------------------------------- 17.1 지표 조회
@@ -294,3 +319,118 @@ def test_compare_route_not_shadowed_by_post_id(
     response = client.get(f"/sns-posts/compare?store_id={store_id}", headers=auth_headers)
 
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------- 17.3 주간 총합
+
+
+def test_weekly_summary_counts_only_this_weeks_gain(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """이번 주 시작 전 누적값을 빼서 "이번 주에 새로 늘어난 양"만 잡아야 한다."""
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "1000", week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "likes", "50", week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "views", "1350", week_start + timedelta(hours=1))
+    _add_metric_at(db_session, post, "likes", "62", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert instagram["weekly_views"] == 350
+    assert instagram["weekly_likes"] == 12
+
+
+def test_weekly_summary_counts_full_total_for_newly_linked_post(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """이번 주에 새로 연결된 영상은 시작 전 기준값이 없으니 지금 누적 전부가 이번 주 몫이다."""
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "200", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert instagram["weekly_views"] == 200
+
+
+def test_weekly_summary_sums_across_multiple_posts(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    week_start = _week_start_utc(utcnow())
+    post_a = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    post_b = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    _add_metric_at(db_session, post_a, "views", "300", week_start + timedelta(hours=1))
+    _add_metric_at(db_session, post_b, "views", "120", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert instagram["weekly_views"] == 420
+
+
+def test_weekly_summary_separates_platforms(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    week_start = _week_start_utc(utcnow())
+    ig_post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    yt_post = _linked(db_session, _make_post(db_session, store_id, platform="YOUTUBE"))
+    _add_metric_at(db_session, ig_post, "views", "100", week_start + timedelta(hours=1))
+    _add_metric_at(db_session, yt_post, "views", "999", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    by_platform = {p["platform"]: p["weekly_views"] for p in body["platforms"]}
+    assert by_platform == {"INSTAGRAM": 100, "YOUTUBE": 999}
+
+
+def test_weekly_summary_always_returns_both_platforms_even_when_empty(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """연결된 게시물이 없어도 두 플랫폼 다 0으로 나와야 화면이 고정된 탭 2개를 그릴 수 있다."""
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    assert {p["platform"] for p in body["platforms"]} == {"INSTAGRAM", "YOUTUBE"}
+    assert all(p["weekly_views"] == 0 and p["weekly_likes"] == 0 for p in body["platforms"])
+
+
+def test_weekly_summary_ignores_posts_not_linked(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """연결확정(16.3) 전 게시물은 아직 지표를 가져올 대상이 아니다."""
+    post = _make_post(db_session, store_id, platform="INSTAGRAM")  # 연결 안 함(PENDING_LINK)
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "500", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert instagram["weekly_views"] == 0
+
+
+def test_weekly_summary_hidden_from_other_user(
+    client: TestClient, other_headers: dict[str, str], store_id: int
+) -> None:
+    response = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=other_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "STORE_NOT_FOUND"
+
+
+def test_weekly_summary_route_not_shadowed_by_post_id(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """`/weekly-summary`도 `/compare`와 같은 이유로 `/{postId}`보다 먼저 선언돼야 한다."""
+    response = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+
+
+def test_weekly_summary_returns_week_start(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    assert body["week_start"].endswith("Z")

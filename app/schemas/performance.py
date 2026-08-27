@@ -1,4 +1,4 @@
-"""성과분석 요청/응답 스키마 (API명세서 17.1~17.2)."""
+"""성과분석 요청/응답 스키마 (API명세서 17.1~17.3)."""
 
 from app.schemas.common import BaseSchema, MetricValue, UtcDatetime
 
@@ -28,3 +28,18 @@ class ComparisonItem(BaseSchema):
 
 class ComparisonResponse(BaseSchema):
     comparison: list[ComparisonItem]
+
+
+class PlatformWeeklyTotal(BaseSchema):
+    platform: str
+    # "이번 주 신규 증가분"의 합산이다 — 지금 시점 누적 총합이 아니다. 연결된
+    # 게시물이 없어도 0이다(측정 불가라 N/A인 다른 지표들과 달리, 합산은 대상이
+    # 없으면 진짜 0이 맞다).
+    weekly_views: MetricValue
+    weekly_likes: MetricValue
+
+
+class WeeklySummaryResponse(BaseSchema):
+    # 이번 주 시작(월요일 00:00 KST)
+    week_start: UtcDatetime
+    platforms: list[PlatformWeeklyTotal]
