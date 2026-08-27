@@ -127,9 +127,7 @@ def start_edit(db: Session, project: ShortsProject, target_platform: str) -> Vid
     새로 만든다.
     """
     db.execute(
-        select(ShortsProject.id)
-        .where(ShortsProject.id == project.id)
-        .with_for_update()
+        select(ShortsProject.id).where(ShortsProject.id == project.id).with_for_update()
     ).scalar_one()
     existing = _find_active_output(db, project, target_platform)
     if existing is not None:

@@ -560,14 +560,10 @@ def _editing_run_from_json(data: dict[str, Any]) -> EditingRun:
             int(data["queue_position"]) if data.get("queue_position") is not None else None
         ),
         estimated_wait_sec=(
-            int(data["estimated_wait_sec"])
-            if data.get("estimated_wait_sec") is not None
-            else None
+            int(data["estimated_wait_sec"]) if data.get("estimated_wait_sec") is not None else None
         ),
         stage_elapsed_sec=(
-            int(data["stage_elapsed_sec"])
-            if data.get("stage_elapsed_sec") is not None
-            else None
+            int(data["stage_elapsed_sec"]) if data.get("stage_elapsed_sec") is not None else None
         ),
     )
 
