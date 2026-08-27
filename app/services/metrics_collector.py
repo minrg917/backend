@@ -1,9 +1,15 @@
-"""SNS 게시물 성과 지표 수집 배치 (API명세서 17.1 `sns_post_metrics` 채우기).
+"""SNS 게시물 성과 지표 수집 (API명세서 17.1 `sns_post_metrics` 채우기).
 
-`sarils-metrics-collect.timer`가 하루 한 번 돌린다(`scripts/collect_sns_metrics.py`).
-연결 확정(16.3, `LINKED`)된 게시물만 대상으로 플랫폼별 어댑터(`instagram_insights.py`
-/ `youtube_analytics.py`)를 호출해 지표를 쌓는다. **매번 insert이지 update가
-아니다** — `SnsPostMetric`이 추이를 보려고 스냅샷을 쌓는 설계라서다.
+두 경로로 호출된다.
+
+1. `sarils-metrics-collect.timer`가 하루 한 번 돌리는 배치(`collect_all`,
+   `scripts/collect_sns_metrics.py`) — 연결 확정된 게시물 전체를 순회한다.
+2. `sns.link_post()`(16.3 연결확정)가 그 자리에서 한 건만 즉시 당겨오는
+   `collect_for_post` — 연결하자마자 사장님 화면에 뭔가 보이게 하려고
+   2026-08-27 추가. 배치를 최대 하루 기다리지 않아도 된다.
+
+**매번 insert이지 update가 아니다** — `SnsPostMetric`이 추이를 보려고
+스냅샷을 쌓는 설계라서다.
 """
 
 import logging
@@ -44,27 +50,41 @@ def collect_all(db: Session) -> tuple[int, int]:
         )
     )
 
-    collected = 0
-    for post in posts:
-        connection = db.get(SnsConnection, post.sns_connection_id)
-        if connection is None or connection.sns_platform not in _FETCHERS:
-            continue
-
-        access_token = _ensure_fresh_token(db, connection)
-        if access_token is None:
-            continue
-
-        fetch = _FETCHERS[connection.sns_platform]
-        metrics = fetch(access_token, post.external_post_id)
-        if not metrics:
-            continue
-
-        for name, value in metrics.items():
-            db.add(SnsPostMetric(sns_post_id=post.id, metric_name=name, metric_value=value))
-        db.commit()
-        collected += 1
-
+    collected = sum(1 for post in posts if _collect_for_post(db, post))
     return len(posts), collected
+
+
+def collect_for_post(db: Session, post: SnsPost) -> bool:
+    """게시물 하나만 즉시 수집한다 (16.3 연결확정 직후 호출, 2026-08-27).
+
+    사장님이 연결하자마자 성과 화면에 뭔가 보이게 하려는 용도라, 다음 배치를
+    기다리게 하지 않는다. 실패해도 예외를 올리지 않는다 — 이건 부가 기능이고
+    16.3 연결확정 자체는 이미 끝난 뒤라, 여기서 실패해도 다음 배치가 마저 채운다.
+    """
+    return _collect_for_post(db, post)
+
+
+def _collect_for_post(db: Session, post: SnsPost) -> bool:
+    if post.sns_connection_id is None or post.external_post_id is None:
+        return False
+
+    connection = db.get(SnsConnection, post.sns_connection_id)
+    if connection is None or connection.sns_platform not in _FETCHERS:
+        return False
+
+    access_token = _ensure_fresh_token(db, connection)
+    if access_token is None:
+        return False
+
+    fetch = _FETCHERS[connection.sns_platform]
+    metrics = fetch(access_token, post.external_post_id)
+    if not metrics:
+        return False
+
+    for name, value in metrics.items():
+        db.add(SnsPostMetric(sns_post_id=post.id, metric_name=name, metric_value=value))
+    db.commit()
+    return True
 
 
 def _ensure_fresh_token(db: Session, connection: SnsConnection) -> str | None:
