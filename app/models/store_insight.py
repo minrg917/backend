@@ -1,8 +1,9 @@
 """가게 인사이트 모델 (`docs/ERD.sql`의 `store_insights`)."""
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -37,6 +38,13 @@ class StoreInsight(Base):
     insight_content: Mapped[str | None] = mapped_column(Text, nullable=True, comment="분석 내용")
     insight_source: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="근거 출처(외부데이터/AI추론)"
+    )
+    # 2026-08-27 추가. 상권분석의 나이대·성별 분포처럼 텍스트로 담기 힘든 구조화된
+    # 값 전용 — promotion_detail/guide/project_state와 같은 이유로 컬럼을 쪼개지
+    # 않는다(인사이트 유형마다 모양이 다르고, AI 응답을 검증 없이 그대로 캐시한다).
+    # 텍스트로 표현되는 값(제목·요약)은 그대로 insight_title/insight_content를 쓴다.
+    insight_data: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True, comment="구조화된 분석 데이터(나이·성별 분포 등, 유형마다 모양 다름)"
     )
     generated_at: Mapped[datetime] = mapped_column(
         DateTime,
