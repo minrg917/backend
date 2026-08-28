@@ -123,9 +123,21 @@ def _crawl_and_save(db: Session, store_id: int, place_id: str) -> None:
             StoreMenu(
                 store_id=store_id,
                 name=name[:200],
-                price=item.get("price"),
+                price=_clean_price(item.get("price")),
                 image_url=item.get("photo_url"),
             )
         )
     db.commit()
     logger.info("메뉴 자동 수집 완료: store_id=%s count=%d", store_id, len(items))
+
+
+def _clean_price(price: object) -> int | None:
+    """카카오가 가격 미표기를 `-1`로 준다(실측, 2026-08-28) — `null`로 바꾼다.
+
+    3.2(수동 입력)는 `price >= 0`을 요구하는데, 이 자동수집 경로는 스키마를
+    거치지 않고 바로 모델을 만들어 검증이 없었다. 그대로 두면 화면에
+    "-1원"처럼 지어낸 적 없는 값이 마치 실제 가격인 것처럼 보인다.
+    """
+    if not isinstance(price, int) or price < 0:
+        return None
+    return price
