@@ -84,6 +84,11 @@ class ShootingTask(Base):
     footage_duration_sec: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="촬영본 길이(초)"
     )
+    thumbnail_url: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="촬영본 대표 프레임 썸네일(영상만, ffmpeg 추출 실패 시 null)",
+    )
     # 촬영 안내. 7.1이 태스크와 함께 저장하고 9.1이 조합해 내려준다.
     # AI 응답 형식이 확정 전이라 컬럼을 쪼개지 않고 JSON으로 둔다.
     # `broll_shot.shot_type`은 여기 넣지 않는다 — `storyboard_scenes.shot_type`에 이미 있다.

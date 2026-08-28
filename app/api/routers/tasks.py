@@ -78,4 +78,5 @@ def upload_footage(
         footage_type=task.footage_type,
         footage_duration_sec=task.footage_duration_sec,
         task_status=task.task_status,
+        thumbnail_url=to_public_url(storage, task.thumbnail_url),
     )

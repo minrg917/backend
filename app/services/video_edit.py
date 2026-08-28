@@ -9,7 +9,6 @@
 
 import json
 import logging
-import subprocess
 import tempfile
 import uuid
 from datetime import timedelta
@@ -24,7 +23,7 @@ from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.mixins import utcnow
 from app.models.shooting_task import ShootingTask
-from app.models.shorts_project import ShortsProject
+from app.models.shorts_project import ShortsProject, ShortsStatus
 from app.models.store import Store
 from app.models.storyboard_scene import StoryboardScene
 from app.models.user import User
@@ -32,6 +31,7 @@ from app.models.video_format import VideoFormat
 from app.models.video_output import RenderStatus, VideoOutput
 from app.schemas.shorts_project import TimelineItem
 from app.services import ai_client
+from app.services.media_thumbnail import generate_thumbnail
 from app.storage import StorageError, get_storage, to_public_url
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,13 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     **`_STUCK_TIMEOUT`을 넘기면 AI를 다시 묻지 않고 바로 FAILED로 끊는다**
     (2026-08-28 추가). AI를 호출하기 전에 먼저 검사하므로, 멈춘 편집에 대해
     더는 폴링 요청마다 AI를 부르지 않는다.
+
+    **렌더가 COMPLETED가 되면 `project.shorts_status`도 `COMPLETED`로 바꾼다**
+    (2026-08-28 추가, FE 리포트). 이전엔 `산출물`만 갱신하고 프로젝트 상태는
+    안 건드려서, 완성된 프로젝트가 "만들던 영상" 목록(DRAFT/IN_PROGRESS)에
+    계속 남아 있었다. `IN_PROGRESS` 쪽 전이는 스코프 밖이다 — 지금 요청받은
+    건 "렌더 완료 시 COMPLETED 전이"뿐이라, 수정 요청(14.3)으로 재렌더가 도는
+    동안 상태를 되돌리는 것까지는 하지 않는다.
     """
     still_in_progress = output.render_status in (RenderStatus.PENDING, RenderStatus.PROCESSING)
     if not still_in_progress or not output.ai_run_id:
@@ -252,9 +259,10 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
         # 배경음악을 직접 입히지 않기로 확정돼 항상 false다(2026-08-24 결정,
         # `docs/AI_연동_입출력.md` 19번).
         output.has_licensed_audio = False
+        project = db.get(ShortsProject, output.shorts_project_id)
+        assert project is not None
+        project.shorts_status = ShortsStatus.COMPLETED
         if result.publishing is not None:
-            project = db.get(ShortsProject, output.shorts_project_id)
-            assert project is not None
             project.publish_kit = {
                 "title": result.publishing.title,
                 "caption": result.publishing.caption,
@@ -301,7 +309,7 @@ def _persist_rendered_video(
         storage = get_storage()
         with source_path.open("rb") as video_stream:
             storage.save(video_key, video_stream, content_type)
-        generated_cover = _generate_cover(storage, source_path, cover_key)
+        generated_cover = generate_thumbnail(storage, source_path, cover_key)
     except (httpx.HTTPError, OSError, StorageError) as exc:
         raise ai_client.AIServiceUnavailable from exc
     finally:
@@ -321,35 +329,6 @@ def _validate_renderer_url(source_url: str) -> None:
     if source.hostname.lower() not in allowed_hosts:
         logger.error("허용되지 않은 AI 렌더러 호스트: %s", source.hostname)
         raise ai_client.AIServiceUnavailable
-
-
-def _generate_cover(storage, source_path: Path, cover_key: str) -> str | None:
-    cover_path = source_path.with_suffix(".jpg")
-    try:
-        subprocess.run(
-            [
-                settings.FFMPEG_PATH,
-                "-y",
-                "-i",
-                str(source_path),
-                "-frames:v",
-                "1",
-                "-vf",
-                "thumbnail=30,scale=720:-2",
-                str(cover_path),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        with cover_path.open("rb") as cover_stream:
-            storage.save(cover_key, cover_stream, "image/jpeg")
-        return cover_key
-    except (OSError, subprocess.SubprocessError, StorageError):
-        logger.warning("최종 영상 커버 이미지 생성 실패", exc_info=True)
-        return None
-    finally:
-        cover_path.unlink(missing_ok=True)
 
 
 def latest_output(db: Session, project: ShortsProject) -> VideoOutput:

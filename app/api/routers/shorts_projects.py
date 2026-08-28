@@ -144,7 +144,9 @@ def update_scenes(
 
 
 @router.get("/{project_id}/tasks", response_model=TaskBoardResponse)
-def list_tasks(project_id: int, user: CurrentUser, db: DbSession) -> TaskBoardResponse:
+def list_tasks(
+    project_id: int, user: CurrentUser, db: DbSession, storage: StorageDep
+) -> TaskBoardResponse:
     """촬영 태스크 보드를 돌려준다.
 
     태스크는 7.1(기획 생성)에서 콘티와 함께 만들어진다 — 태스크를 만드는 별도
@@ -155,7 +157,21 @@ def list_tasks(project_id: int, user: CurrentUser, db: DbSession) -> TaskBoardRe
     return TaskBoardResponse(
         progress_rate=task_service.calculate_progress_rate(tasks),
         estimated_remaining_min=task_service.estimate_remaining_min(project, tasks),
-        tasks=[TaskSummary.model_validate(task) for task in tasks],
+        tasks=[_task_summary(storage, task) for task in tasks],
+    )
+
+
+def _task_summary(storage: Storage, task) -> TaskSummary:
+    """저장 키(`footage_url`/`thumbnail_url`)를 조회 시점에 실제 URL로 바꾼다.
+
+    DB에는 키만 저장한다(사진·메뉴·산출물과 같은 패턴) — `to_public_url`이
+    서명 URL로 바꿔주기 전까지는 앱이 접근할 수 없다.
+    """
+    return TaskSummary.model_validate(task).model_copy(
+        update={
+            "footage_url": to_public_url(storage, task.footage_url),
+            "thumbnail_url": to_public_url(storage, task.thumbnail_url),
+        }
     )
 
 

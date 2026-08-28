@@ -1,7 +1,6 @@
 """AI 자동편집 테스트 (API명세서 14.1 편집시작 / 14.2 결과조회 / 14.3 수정요청)."""
 
 import io
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.shooting_task import ShootingTask
+from app.models.shorts_project import ShortsProject
 from app.models.video_format import VideoFormat
 from app.models.video_output import VideoOutput
 from app.services import video_edit
@@ -61,7 +61,7 @@ def test_renderer_download_uses_internal_auth_and_persists_cover(
     monkeypatch.setattr(video_edit, "get_storage", lambda: FakeStorage())
     monkeypatch.setattr(
         video_edit,
-        "_generate_cover",
+        "generate_thumbnail",
         lambda storage, source_path, cover_key: cover_key,
     )
 
@@ -72,34 +72,6 @@ def test_renderer_download_uses_internal_auth_and_persists_cover(
     assert saved[video_key] == MP4_BYTES
     assert cover_key.endswith(".jpg")
     assert captured["headers"] == {"X-Internal-API-Key": "shared-secret"}
-
-
-def test_generate_cover_uses_representative_thumbnail_filter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "result.mp4"
-    source.write_bytes(MP4_BYTES)
-    saved: dict[str, bytes] = {}
-    captured: list[str] = []
-
-    class FakeStorage:
-        def save(self, key, stream, content_type=None):
-            assert content_type == "image/jpeg"
-            saved[key] = stream.read()
-            return key
-
-    def fake_run(command, **kwargs):
-        del kwargs
-        captured.extend(command)
-        Path(command[-1]).write_bytes(b"jpeg")
-
-    monkeypatch.setattr(video_edit.subprocess, "run", fake_run)
-
-    key = video_edit._generate_cover(FakeStorage(), source, "outputs/result.jpg")
-
-    assert key == "outputs/result.jpg"
-    assert "thumbnail=30,scale=720:-2" in captured
-    assert saved[key] == b"jpeg"
 
 
 @pytest.fixture
@@ -506,6 +478,38 @@ def test_result_stores_error_message_on_failure(
 
     output = db_session.get(VideoOutput, output_id)
     assert output.error_message == "RendererError: recipe 검증 실패"
+
+
+def test_render_completion_marks_project_completed(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """렌더가 끝나면 프로젝트도 COMPLETED가 돼야 "만들던 영상" 목록에서 빠진다.
+
+    FE 리포트(2026-08-28): 렌더는 끝나도 `shorts_status`가 안 바뀌어 완성된
+    프로젝트가 계속 진행 중 목록에 남아 있었다.
+    """
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    _start_edit(client, auth_headers, project_id)
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(run_id=run_id, status="COMPLETED"),
+    )
+    monkeypatch.setattr(
+        ai_client, "get_editing_run_result", lambda run_id: ai_client.EditingRunResult()
+    )
+
+    client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers)
+
+    project = db_session.get(ShortsProject, project_id)
+    assert project.shorts_status == "COMPLETED"
 
 
 def test_stuck_edit_times_out_without_calling_ai(
