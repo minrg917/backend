@@ -151,14 +151,25 @@ def test_turn_moves_straight_to_recommend(
             "editing_template_id",
             "editing_template_version",
             "video_format_id",
+            "reference_url",
+            "guide_video_url",
+            "source_platform",
         }
     # 3장이 서로 다른 템플릿이어야 한다 — 같은 카드가 중복으로 뜨면 안 된다.
     template_ids = {r["editing_template_id"] for r in body["recommendations"]}
     assert len(template_ids) == 3
     assert body["project_state"]["ready_for_confirmation"] is True
-    # placeholder는 매번 새 editing_template_id를 만들어내므로, 아직 한 번도
-    # 채택된 적 없어 매칭되는 video_formats 행이 없다 — 지어내지 않고 null.
-    assert all(r["video_format_id"] is None for r in body["recommendations"])
+    # 추천을 화면에 내리기 전에 실제로 재생 가능한 영상 포맷이 연결돼야 한다.
+    assert all(r["video_format_id"] is not None for r in body["recommendations"])
+    assert all(
+        r["reference_url"].startswith("https://www.youtube.com/")
+        for r in body["recommendations"]
+    )
+    assert all(
+        r["guide_video_url"].startswith("https://www.youtube.com/")
+        for r in body["recommendations"]
+    )
+    assert all(r["source_platform"] == "YOUTUBE" for r in body["recommendations"])
 
 
 def test_find_video_format_id_returns_existing_match(db_session: Session) -> None:
@@ -300,6 +311,8 @@ def test_accept_creates_project_with_title_and_format(
     assert video_format is not None
     assert video_format.editing_template_id == chosen["editing_template_id"]
     assert video_format.editing_template_version == chosen["editing_template_version"]
+    assert video_format.reference_url == chosen["reference_url"]
+    assert video_format.guide_video_url == chosen["guide_video_url"]
 
 
 def test_accept_populates_scenes_and_tasks(

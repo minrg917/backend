@@ -161,6 +161,9 @@ def _recommendation(item: dict[str, Any] | None) -> "Recommendation | None":
         concept=str(item["concept"]),
         editing_template_id=str(item["editing_template_id"]),
         editing_template_version=int(item["editing_template_version"]),
+        reference_url=str(item.get("reference_url") or "") or None,
+        guide_video_url=str(item.get("guide_video_url") or "") or None,
+        source_platform=str(item.get("source_platform") or "") or None,
     )
 
 
@@ -852,6 +855,9 @@ class Recommendation:
     concept: str
     editing_template_id: str
     editing_template_version: int
+    reference_url: str | None = None
+    guide_video_url: str | None = None
+    source_platform: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1055,6 +1061,7 @@ def _placeholder_recommendation(
     기준으로 적재하는 것과 같은 자리에서, 이건 `editing_template_id` 기준).
     """
     template_id = f"placeholder-template-{uuid.uuid4().hex[:12]}"
+    placeholder_video_url = f"https://www.youtube.com/watch?v={template_id[-11:]}"
     subject = representative_menu.name if representative_menu else store.name
     return Recommendation(
         recommendation_id=f"placeholder-rec-{uuid.uuid4().hex[:12]}",
@@ -1063,6 +1070,9 @@ def _placeholder_recommendation(
         concept="AI 연동 전이라 실제 컨셉이 아닙니다. 연동 후 매장·메뉴에 맞춰 추천됩니다.",
         editing_template_id=template_id,
         editing_template_version=1,
+        reference_url=placeholder_video_url,
+        guide_video_url=placeholder_video_url,
+        source_platform="YOUTUBE",
     )
 
 
