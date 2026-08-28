@@ -95,9 +95,7 @@ def _build_footage_inputs(db: Session, project: ShortsProject) -> list[ai_client
                 shooting_scene_order=(
                     None if shooting_element_id else (scene_order or task.display_order)
                 ),
-                shooting_element_id=(
-                    str(shooting_element_id) if shooting_element_id else None
-                ),
+                shooting_element_id=(str(shooting_element_id) if shooting_element_id else None),
             )
         )
     return footages
