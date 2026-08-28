@@ -275,6 +275,64 @@ def test_shooting_guide_keeps_task_type_and_guide_type_when_present(
     assert task.guide["guide_type"] == "DANCE"
 
 
+def test_informational_shooting_guide_uses_capture_elements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """정보형은 내부 편집 장면 수와 무관하게 최대 5개 촬영 요소로 태스크를 만든다."""
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "format_type": "정보형",
+            "scenes": [
+                {"scene_order": index, "scene_description": f"내부 컷 {index}"}
+                for index in range(1, 11)
+            ],
+            "tasks": [],
+            "shooting_elements": [
+                {
+                    "element_id": "ELEMENT_01",
+                    "display_order": 1,
+                    "title": "제조 과정",
+                    "instruction": "손동작이 보이게 길게 촬영하세요.",
+                    "minimum_recording_sec": 15,
+                },
+                {
+                    "element_id": "ELEMENT_02",
+                    "display_order": 2,
+                    "title": "대표 메뉴",
+                    "instruction": "메뉴를 여러 각도로 촬영하세요.",
+                    "minimum_recording_sec": 20,
+                },
+            ],
+        },
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_info",
+        editing_template_version=1,
+        format_title="카페 정보형",
+        reference_url="internal://template",
+    )
+
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        Store(id=10, user_id=1, name="행복분식"),
+        ShortsProject(id=30, store_id=10),
+    )
+
+    assert len(guide.scenes) == 10
+    assert [task.task_title for task in guide.tasks] == ["제조 과정", "대표 메뉴"]
+    assert [task.shooting_element_id for task in guide.tasks] == ["ELEMENT_01", "ELEMENT_02"]
+    assert all(task.scene_index is None for task in guide.tasks)
+    assert guide.tasks[0].guide == {
+        "guide_type": "OVERLAY",
+        "instructions": ["손동작이 보이게 길게 촬영하세요."],
+        "minimum_recording_sec": 15,
+        "shooting_element_id": "ELEMENT_01",
+    }
+
+
 def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
@@ -312,6 +370,43 @@ def test_editing_run_uses_template_and_video_contract(monkeypatch: pytest.Monkey
     # 한국어 얼굴노출모드가 AI 쪽 영문 토큰으로 변환되어야 한다(원문 그대로 보내면 안 됨).
     assert body["project"]["face_exposure"] == "allowed"
     assert body["videos"][0]["shooting_scene_order"] == 1
+
+
+def test_editing_run_sends_informational_shooting_element(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        captured.update(method=method, path=path, **kwargs)
+        return {"run_id": "edit_info", "status": "QUEUED"}
+
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(ai_client, "_request_json", fake_request)
+    project = ShortsProject(id=30, store_id=10, recommendation_id="rec_info")
+    video_format = VideoFormat(
+        editing_template_id="edit_template_info",
+        editing_template_version=4,
+        format_title="카페 정보형",
+        reference_url="internal://template",
+    )
+
+    ai_client.start_editing_run(
+        Store(id=10, user_id=1, name="행복분식"),
+        project,
+        video_format,
+        [
+            ai_client.FootageInput(
+                "task_1",
+                "https://signed.example/info.mp4",
+                shooting_element_id="ELEMENT_01",
+            )
+        ],
+    )
+
+    video = captured["json_body"]["videos"][0]
+    assert video["shooting_element_id"] == "ELEMENT_01"
+    assert video["shooting_scene_order"] is None
 
 
 def test_face_exposure_unknown_value_falls_back_to_not_allowed() -> None:
