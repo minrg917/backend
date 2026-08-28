@@ -1,5 +1,6 @@
-"""성과분석 로직 (API명세서 17.1 성과지표 / 17.2 성과 비교 / 17.3 주간 총합)."""
+"""성과분석 로직 (API명세서 17.1 성과지표 / 17.2 성과 비교 / 17.3 주간 총합 / 17.4 베스트 영상)."""
 
+import random
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
@@ -10,6 +11,7 @@ from app.models.mixins import utcnow
 from app.models.shorts_project import ShortsProject
 from app.models.sns import PostStatus, SnsPost, SnsPostMetric
 from app.models.store import Store
+from app.models.video_format import VideoFormat
 from app.models.video_output import VideoOutput
 
 # 비교·주간합산에 쓰는 지표 이름. 플랫폼마다 주는 이름이 달라도 수집 단계에서 이 이름으로 맞춘다.
@@ -260,3 +262,71 @@ def weekly_summary(
 
         results.append((platform, totals[METRIC_VIEWS], totals[METRIC_LIKES]))
     return week_start, results
+
+
+# ---------------------------------------------------------------- 17.4 베스트 영상 · 다음 추천
+
+
+def best_performing_post(db: Session, store: Store) -> tuple[SnsPost, Decimal, Decimal] | None:
+    """가게가 지금까지 올린 영상 중 조회수가 가장 높은 것 하나를 고른다 (API명세서 17.4).
+
+    17.2와 달리 플랫폼별 비율 정규화를 하지 않는다 — 이건 "가장 잘된 영상"을
+    보여주는 하이라이트 카드지, 서로 다른 조건의 영상을 공정하게 줄 세우는
+    비교가 아니다. 인스타/유튜브를 합쳐 조회수 절대값으로만 고른다.
+
+    지표가 하나도 없으면(연동 전이거나 아직 수집 전) `None`이다 — 없는 걸
+    있는 척 고를 수는 없다.
+
+    (게시물, 조회수, 좋아요) 튜플을 돌려준다. 좋아요가 없는 플랫폼/영상이면 0이다.
+    """
+    post_ids: list[int] = []
+    for platform in _SUPPORTED_PLATFORMS:
+        post_ids.extend(_linked_post_ids(db, store, platform))
+    if not post_ids:
+        return None
+
+    values = latest_values(db, post_ids)
+    best_id: int | None = None
+    best_views: Decimal | None = None
+    for post_id, metrics in values.items():
+        views = metrics.get(METRIC_VIEWS)
+        if views is None:
+            continue
+        if best_views is None or views > best_views:
+            best_id, best_views = post_id, views
+    if best_id is None or best_views is None:
+        return None
+
+    post = db.get(SnsPost, best_id)
+    assert post is not None
+    likes = values[best_id].get(METRIC_LIKES, Decimal(0))
+    return post, best_views, likes
+
+
+def recommend_next_format(db: Session, store: Store, best_post: SnsPost) -> VideoFormat | None:
+    """베스트 영상을 근거로 다음에 찍을 포맷 하나를 추천한다 (API명세서 17.4).
+
+    **실제로는 데이터 기반 분석이 아니라 무작위 선택이다** — 기능명세서 F17.5가
+    의도한 "성공 확장/약점 보완/새 실험" 3종 분석은 시간상 만들지 않기로
+    했다(2026-08-28 결정). `best_post`가 있을 때만 부르는 게 전제다 — 근거
+    영상이 없는데 "이 영상 기반 추천"이라는 문구만 붙일 수는 없어서다.
+
+    **가게마다 고정된 시드로 고른다.** 매 조회마다 다른 게 나오면 추천처럼
+    보이지 않는다 — 베스트 영상이 바뀌기 전까지는 같은 가게에 같은 값을 준다.
+    베스트 영상을 만든 포맷 자체는 후보에서 뺀다 — "방금 그 영상 또 만드세요"가
+    추천이 되진 않는다.
+    """
+    used_format_id = db.scalar(
+        select(ShortsProject.video_format_id)
+        .join(VideoOutput, VideoOutput.shorts_project_id == ShortsProject.id)
+        .where(VideoOutput.id == best_post.video_output_id)
+    )
+    candidates = list(
+        db.scalars(
+            select(VideoFormat).where(VideoFormat.is_active.is_(True)).order_by(VideoFormat.id)
+        )
+    )
+    pool = [f for f in candidates if f.id != used_format_id] or candidates
+    if not pool:
+        return None
+    return random.Random(store.id).choice(pool)

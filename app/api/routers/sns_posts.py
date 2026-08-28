@@ -1,4 +1,4 @@
-"""성과분석 API (API명세서 17.1 지표 조회 / 17.2 성과 비교)."""
+"""성과분석 API (API명세서 17.1 지표 조회 / 17.2 성과 비교 / 17.4 베스트 영상·추천)."""
 
 from datetime import date
 from typing import Annotated
@@ -7,6 +7,8 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.performance import (
+    BestPerformingResponse,
+    BestPostItem,
     ComparisonItem,
     ComparisonResponse,
     MetricItem,
@@ -18,6 +20,7 @@ from app.schemas.sns import SnsPostLinkRequest, SnsPostLinkResponse, SnsPostResp
 from app.services import performance as perf_service
 from app.services import sns as sns_service
 from app.services import store as store_service
+from app.services import video_format as format_service
 
 router = APIRouter(prefix="/sns-posts", tags=["sns-posts"])
 
@@ -78,6 +81,43 @@ def get_weekly_summary(
             PlatformWeeklyTotal(platform=platform, weekly_views=views, weekly_likes=likes)
             for platform, views, likes in rows
         ],
+    )
+
+
+@router.get("/best-performing", response_model=BestPerformingResponse)
+def get_best_performing(
+    user: CurrentUser,
+    db: DbSession,
+    store_id: Annotated[int, Query(description="조회할 가게 ID")],
+) -> BestPerformingResponse:
+    """가장 반응이 좋았던 영상과, 그걸 근거로 한 다음 포맷 추천을 돌려준다.
+
+    아직 게시물이 없거나 지표가 하나도 수집되지 않았으면 둘 다 `null`이다.
+
+    **경로가 `/{postId}`보다 먼저 선언돼야 한다** — `/compare`·`/weekly-summary`와
+    같은 이유로, 뒤에 두면 `best-performing`이 `postId`로 해석돼 422가 난다.
+    """
+    store = store_service.get_owned_store(db, user, store_id)
+    best = perf_service.best_performing_post(db, store)
+    if best is None:
+        return BestPerformingResponse(best_post=None, recommended_format=None)
+
+    post, views, likes = best
+    recommended = perf_service.recommend_next_format(db, store, post)
+    recommended_summary = (
+        format_service.build_recommendations(db, user, [recommended])[0]
+        if recommended is not None
+        else None
+    )
+    return BestPerformingResponse(
+        best_post=BestPostItem(
+            sns_post_id=post.id,
+            platform=post.post_platform,
+            views=views,
+            likes=likes,
+            posted_at=post.posted_at,
+        ),
+        recommended_format=recommended_summary,
     )
 
 

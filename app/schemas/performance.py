@@ -1,6 +1,7 @@
-"""성과분석 요청/응답 스키마 (API명세서 17.1~17.3)."""
+"""성과분석 요청/응답 스키마 (API명세서 17.1~17.4)."""
 
 from app.schemas.common import BaseSchema, MetricValue, UtcDatetime
+from app.schemas.video_format import VideoFormatSummary
 
 
 class MetricItem(BaseSchema):
@@ -43,3 +44,19 @@ class WeeklySummaryResponse(BaseSchema):
     # 이번 주 시작(월요일 00:00 KST)
     week_start: UtcDatetime
     platforms: list[PlatformWeeklyTotal]
+
+
+class BestPostItem(BaseSchema):
+    sns_post_id: int
+    platform: str
+    views: MetricValue
+    likes: MetricValue
+    posted_at: UtcDatetime | None
+
+
+class BestPerformingResponse(BaseSchema):
+    # 지표가 하나도 없으면(연동 전/수집 전) 전부 null이다 — 없는 걸 있는 척하지 않는다.
+    best_post: BestPostItem | None
+    # best_post가 없으면 함께 null이다. "이 영상 기반 추천"이라는 문구가 성립하려면
+    # 근거가 될 영상이 실제로 있어야 한다.
+    recommended_format: VideoFormatSummary | None

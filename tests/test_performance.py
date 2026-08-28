@@ -1,8 +1,9 @@
-"""성과분석 테스트 (API명세서 17.1 지표 조회 / 17.2 성과 비교 / 17.3 주간 총합)."""
+"""성과분석 테스트 (17.1 지표 조회 / 17.2 성과 비교 / 17.3 주간 총합 / 17.4 베스트 영상)."""
 
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.mixins import utcnow
 from app.models.shorts_project import ShortsProject
 from app.models.sns import PostStatus, SnsPost, SnsPostMetric
+from app.models.video_format import VideoFormat
 from app.models.video_output import RenderStatus, VideoOutput
 from app.services.performance import _week_start_utc
 
@@ -50,9 +52,12 @@ def _make_post(
     platform: str = "INSTAGRAM",
     goal: str = "메뉴소개",
     days_ago: int = 10,
+    video_format_id: int | None = None,
 ) -> SnsPost:
     """게시물 하나를 프로젝트·산출물까지 갖춰 만든다."""
-    project = ShortsProject(store_id=store_id, promotion_purpose=goal)
+    project = ShortsProject(
+        store_id=store_id, promotion_purpose=goal, video_format_id=video_format_id
+    )
     db.add(project)
     db.flush()
 
@@ -107,6 +112,24 @@ def _linked(db: Session, post: SnsPost) -> SnsPost:
     db.commit()
     db.refresh(post)
     return post
+
+
+def _make_format(db: Session, **overrides: Any) -> VideoFormat:
+    fields: dict[str, Any] = {
+        "format_title": "가격 공개 반전 챌린지",
+        "format_type": "밈",
+        "reference_url": f"https://youtu.be/{uuid4().hex[:8]}",
+        "source_platform": "YOUTUBE",
+        "expected_duration_sec": 24,
+        "shooting_difficulty": "하",
+        "requires_face": False,
+    }
+    fields.update(overrides)
+    video_format = VideoFormat(**fields)
+    db.add(video_format)
+    db.commit()
+    db.refresh(video_format)
+    return video_format
 
 
 # ---------------------------------------------------------------- 17.1 지표 조회
@@ -434,3 +457,144 @@ def test_weekly_summary_returns_week_start(
     body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
 
     assert body["week_start"].endswith("Z")
+
+
+# ---------------------------------------------------------------- 17.4 베스트 영상 · 다음 추천
+
+
+def test_best_performing_null_before_any_metrics(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """게시물이 있어도 지표가 하나도 없으면 없는 걸 있는 척하지 않는다."""
+    _linked(db_session, _make_post(db_session, store_id))
+
+    body = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert body["best_post"] is None
+    assert body["recommended_format"] is None
+
+
+def test_best_performing_empty_when_nothing_posted(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    body = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert body["best_post"] is None
+    assert body["recommended_format"] is None
+
+
+def test_best_performing_ignores_unlinked_posts(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """16.3 연결확정 전 게시물은 후보가 아니다 — 17.3과 같은 규칙."""
+    post = _make_post(db_session, store_id)  # 연결 안 함
+    _add_metric(db_session, post, "views", "999999")
+
+    body = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert body["best_post"] is None
+
+
+def test_best_performing_picks_highest_views_across_platforms(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """인스타/유튜브를 합쳐 조회수 절대값으로만 고른다 — 17.2와 달리 비율 정규화하지 않는다."""
+    low = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    _add_metric(db_session, low, "views", "500")
+    _add_metric(db_session, low, "likes", "50")
+
+    high = _linked(db_session, _make_post(db_session, store_id, platform="YOUTUBE"))
+    _add_metric(db_session, high, "views", "15000")
+    _add_metric(db_session, high, "likes", "800")
+
+    body = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert body["best_post"]["sns_post_id"] == high.id
+    assert body["best_post"]["platform"] == "YOUTUBE"
+    assert Decimal(str(body["best_post"]["views"])) == Decimal("15000")
+    assert Decimal(str(body["best_post"]["likes"])) == Decimal("800")
+
+
+def test_best_performing_likes_default_zero_when_missing(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    post = _linked(db_session, _make_post(db_session, store_id))
+    _add_metric(db_session, post, "views", "1000")
+
+    body = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert Decimal(str(body["best_post"]["likes"])) == Decimal("0")
+
+
+def test_best_performing_recommends_active_format_excluding_used_one(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """추천은 실제 데이터 분석이 아니라 무작위지만, 활성 포맷 중에서 고르고
+
+    방금 그 베스트 영상을 만든 포맷 자체는 제외한다.
+    """
+    used = _make_format(db_session, format_title="써버린 포맷")
+    other = _make_format(db_session, format_title="다른 포맷")
+    inactive = _make_format(db_session, format_title="비활성 포맷", is_active=False)
+
+    post = _linked(
+        db_session,
+        _make_post(db_session, store_id, video_format_id=used.id),
+    )
+    _add_metric(db_session, post, "views", "1000")
+
+    body = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert body["recommended_format"] is not None
+    assert body["recommended_format"]["id"] == other.id
+    assert body["recommended_format"]["id"] != inactive.id
+
+
+def test_best_performing_recommendation_is_stable_across_calls(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """가게별로 고정된 시드를 쓰므로 같은 가게는 새로고침해도 같은 값을 준다."""
+    _make_format(db_session, format_title="포맷 A")
+    _make_format(db_session, format_title="포맷 B")
+    _make_format(db_session, format_title="포맷 C")
+
+    post = _linked(db_session, _make_post(db_session, store_id))
+    _add_metric(db_session, post, "views", "1000")
+
+    first = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+    second = client.get(
+        f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers
+    ).json()
+
+    assert first["recommended_format"]["id"] == second["recommended_format"]["id"]
+
+
+def test_best_performing_route_not_shadowed_by_post_id(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    response = client.get(f"/sns-posts/best-performing?store_id={store_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+
+
+def test_best_performing_hidden_from_other_user(
+    client: TestClient, other_headers: dict[str, str], store_id: int
+) -> None:
+    response = client.get(f"/sns-posts/best-performing?store_id={store_id}", headers=other_headers)
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "STORE_NOT_FOUND"
