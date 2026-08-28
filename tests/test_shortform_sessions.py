@@ -162,12 +162,10 @@ def test_turn_moves_straight_to_recommend(
     # 추천을 화면에 내리기 전에 실제로 재생 가능한 영상 포맷이 연결돼야 한다.
     assert all(r["video_format_id"] is not None for r in body["recommendations"])
     assert all(
-        r["reference_url"].startswith("https://www.youtube.com/")
-        for r in body["recommendations"]
+        r["reference_url"].startswith("https://www.youtube.com/") for r in body["recommendations"]
     )
     assert all(
-        r["guide_video_url"].startswith("https://www.youtube.com/")
-        for r in body["recommendations"]
+        r["guide_video_url"].startswith("https://www.youtube.com/") for r in body["recommendations"]
     )
     assert all(r["source_platform"] == "YOUTUBE" for r in body["recommendations"])
 

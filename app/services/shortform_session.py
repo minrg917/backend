@@ -281,9 +281,7 @@ def _resolve_video_format(db: Session, recommendation: dict[str, Any]) -> VideoF
         if not guide_video_url and _is_playable_youtube_url(existing.guide_video_url):
             guide_video_url = str(existing.guide_video_url)
     guide_video_url = guide_video_url or reference_url
-    if not _is_playable_youtube_url(reference_url) or not _is_playable_youtube_url(
-        guide_video_url
-    ):
+    if not _is_playable_youtube_url(reference_url) or not _is_playable_youtube_url(guide_video_url):
         raise RecommendationMediaUnavailable
 
     url_owner = db.scalar(select(VideoFormat).where(VideoFormat.reference_url == reference_url))

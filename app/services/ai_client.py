@@ -1000,9 +1000,7 @@ def submit_shortform_turn(
 def _placeholder_turn(
     store: Store, project_state: dict[str, Any], representative_menu: StoreMenu | None
 ) -> TurnResult:
-    recommendations = [
-        _placeholder_recommendation(store, representative_menu) for _ in range(3)
-    ]
+    recommendations = [_placeholder_recommendation(store, representative_menu) for _ in range(3)]
     new_state = dict(project_state)
     new_state["ready_for_confirmation"] = True
     if representative_menu is not None:
@@ -1035,9 +1033,7 @@ def get_next_shortform_recommendations(
     del shown_template_ids  # placeholder는 항상 새 템플릿을 만들어 자동으로 안 겹친다
     if not is_enabled():
         if settings.AI_SHORTFORM_PLACEHOLDERS_ENABLED:
-            return [
-                _placeholder_recommendation(store, representative_menu) for _ in range(3)
-            ]
+            return [_placeholder_recommendation(store, representative_menu) for _ in range(3)]
         raise AIServiceConfigurationError
 
     del store, representative_menu
