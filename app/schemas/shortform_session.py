@@ -69,12 +69,14 @@ class TurnResponse(BaseSchema):
     # 추천이 없는 turn이면 빈 배열이다 — null 대신 빈 배열을 써서 프론트가 항상
     # 같은 타입으로 다룰 수 있게 한다.
     recommendations: list[RecommendationResponse]
+    has_more_recommendations: bool
 
 
 class NextRecommendationResponse(BaseSchema):
     id: int
     recommendations: list[RecommendationResponse]
     shown_template_ids: list[str]
+    has_more_recommendations: bool
 
 
 class SessionAcceptRequest(BaseSchema):

@@ -97,6 +97,25 @@ def test_enrich_saves_fetched_items(db_session: Session, monkeypatch: pytest.Mon
     assert coffee.image_url == "http://cdn.example.com/a.jpg"
 
 
+def test_enrich_converts_negative_price_to_null(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """카카오가 가격 미표기를 `-1`로 준다(실측, 2026-08-28) — 그대로 저장하면
+
+    지어낸 적 없는 "-1원"이 화면에 실제 가격처럼 보인다. 3.2(수동 입력)가
+    `price >= 0`을 요구하는 것과 같은 기준으로 걸러야 한다.
+    """
+    store = _make_store(db_session, "http://place.map.kakao.com/10534102")
+    items = [{"name": "가격 미표기 메뉴", "price": -1}]
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _fake_response(items))
+
+    menu_crawl.enrich_menu_from_kakao(store.id, "10534102", _session_factory(db_session))
+
+    menu = db_session.query(StoreMenu).filter(StoreMenu.store_id == store.id).one()
+    assert menu.price is None
+
+
 def test_enrich_silently_ignores_http_error(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

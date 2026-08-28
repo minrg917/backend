@@ -65,6 +65,7 @@ class _DetailBase(BaseSchema):
 
 class MenuPromotionDetail(_DetailBase):
     detail_tag: MenuDetailTag
+    menu_name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class EventPromotionDetail(_DetailBase):
@@ -78,6 +79,7 @@ class EventPromotionDetail(_DetailBase):
 
 class StorePromotionDetail(_DetailBase):
     elements: list[StoreIntroElement] = Field(min_length=1)
+    description: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class CustomerPromotionDetail(_DetailBase):

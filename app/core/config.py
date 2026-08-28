@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     AI_SERVER_URL: str = ""
     AI_SERVER_API_KEY: str = ""
     AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+    # 운영 API에서 가짜 추천이 노출되지 않도록 기본 비활성. 로컬 UI 개발 때만 명시적으로 켠다.
+    AI_SHORTFORM_PLACEHOLDERS_ENABLED: bool = False
     AI_RENDERER_ALLOWED_HOSTS: str = ""
     FFMPEG_PATH: str = "ffmpeg"
 

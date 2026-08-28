@@ -45,6 +45,11 @@ class RecommendationNotFound(NotFoundError):
     message = "선택한 추천을 찾을 수 없습니다."
 
 
+class RecommendationsExhausted(ConflictError):
+    error_code = "NO_MORE_SHORTFORM_RECOMMENDATIONS"
+    message = "현재 조건에 맞는 추천을 모두 확인했습니다."
+
+
 # 화면에 한 번에 보여줄 추천 개수. AI는 호출 한 번에 1개만 준다(`docs/AI_연동_입출력.md`
 # 9번 "추천 원칙: 항상 1개만 반환") — 여러 개를 보여주는 건 백엔드가 "다시 추천 받기"를
 # 필요한 만큼 이어서 호출해 묶어주는 것이다.
@@ -143,12 +148,34 @@ def _collect_recommendations(
     recommendations = [first]
     shown = [*shown_before_first, first.editing_template_id]
     while len(recommendations) < count:
-        next_recommendation = ai_client.get_next_shortform_recommendation(
-            store, session_token, menu, shown
-        )
+        try:
+            next_recommendation = ai_client.get_next_shortform_recommendation(
+                store, session_token, menu, shown
+            )
+        except ai_client.AINoMoreRecommendations:
+            break
+        if next_recommendation.editing_template_id in shown:
+            break
         recommendations.append(next_recommendation)
         shown.append(next_recommendation.editing_template_id)
     return recommendations, shown
+
+
+def has_more_recommendations(db: Session, session: ShortformSession) -> bool:
+    """동기화된 ACTIVE 포맷 중 아직 표시하지 않은 템플릿이 있는지 확인한다."""
+    if session.session_token.startswith("sf_placeholder_"):
+        return True
+    linked_ids = set(
+        db.scalars(
+            select(VideoFormat.editing_template_id).where(
+                VideoFormat.is_active.is_(True),
+                VideoFormat.editing_template_id.is_not(None),
+            )
+        )
+    )
+    if not linked_ids:
+        return True
+    return bool(linked_ids - set(session.shown_template_ids or []))
 
 
 def submit_turn(
@@ -206,9 +233,12 @@ def get_next_recommendation(db: Session, session: ShortformSession) -> tuple[lis
     menu = _first_menu(db, store.id)
     shown_before = session.shown_template_ids or []
 
-    first = ai_client.get_next_shortform_recommendation(
-        store, session.session_token, menu, shown_before
-    )
+    try:
+        first = ai_client.get_next_shortform_recommendation(
+            store, session.session_token, menu, shown_before
+        )
+    except ai_client.AINoMoreRecommendations as exc:
+        raise RecommendationsExhausted from exc
     recommendations, shown = _collect_recommendations(
         store, session.session_token, menu, first, shown_before
     )

@@ -54,6 +54,7 @@ def submit_turn(
         project_state=result.project_state,
         options=[SessionOptionResponse(id=o.id, label=o.label) for o in result.options],
         recommendations=[_recommendation_response(db, r) for r in recommendations],
+        has_more_recommendations=session_service.has_more_recommendations(db, session),
     )
 
 
@@ -68,6 +69,7 @@ def get_next_recommendation(
         id=session.id,
         recommendations=[_recommendation_response(db, r) for r in recommendations],
         shown_template_ids=shown_ids,
+        has_more_recommendations=session_service.has_more_recommendations(db, session),
     )
 
 

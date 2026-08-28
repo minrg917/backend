@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.video_format import VideoFormat
 
 STORE_BODY: dict[str, Any] = {
@@ -18,6 +19,11 @@ STORE_BODY: dict[str, Any] = {
     "category": "분식",
     "address": "서울 강남구 테헤란로 1길 10",
 }
+
+
+@pytest.fixture(autouse=True)
+def enable_shortform_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "AI_SHORTFORM_PLACEHOLDERS_ENABLED", True)
 
 
 @pytest.fixture
@@ -80,6 +86,20 @@ def test_create_session_for_other_store_is_404(
     response = client.post(f"/stores/{store_id}/shortform-sessions", headers=other_headers)
     assert response.status_code == 404
     assert response.json()["error_code"] == "STORE_NOT_FOUND"
+
+
+def test_create_session_never_returns_placeholder_unless_explicitly_enabled(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    store_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "AI_SHORTFORM_PLACEHOLDERS_ENABLED", False)
+
+    response = client.post(f"/stores/{store_id}/shortform-sessions", headers=auth_headers)
+
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "AI_SERVICE_CONFIGURATION_ERROR"
 
 
 # ---------------------------------------------------------------- turns
