@@ -11,6 +11,7 @@ from app.schemas.performance import (
     BestPostItem,
     ComparisonItem,
     ComparisonResponse,
+    DailyViewsPoint,
     MetricItem,
     MetricListResponse,
     PlatformWeeklyTotal,
@@ -78,8 +79,16 @@ def get_weekly_summary(
     return WeeklySummaryResponse(
         week_start=week_start,
         platforms=[
-            PlatformWeeklyTotal(platform=platform, weekly_views=views, weekly_likes=likes)
-            for platform, views, likes in rows
+            PlatformWeeklyTotal(
+                platform=platform,
+                weekly_views=views,
+                weekly_likes=likes,
+                views_change_rate=change_rate,
+                daily_views=[
+                    DailyViewsPoint(date=day, views=day_views) for day, day_views in daily
+                ],
+            )
+            for platform, views, likes, change_rate, daily in rows
         ],
     )
 

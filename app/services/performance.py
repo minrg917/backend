@@ -229,9 +229,110 @@ def _values_before(
     return values
 
 
+def _kst_date(naive_utc: datetime) -> date:
+    """naive UTC 시각을 KST 달력 날짜로 바꾼다.
+
+    `week_start`(그리고 거기서 파생되는 요일별 경계)는 naive UTC로 저장돼 있는데,
+    "월요일 00:00 KST"는 UTC로는 **일요일 15:00**이다. 여기서 `.date()`를 그냥
+    부르면 하루 밀린 날짜(일요일)가 나온다 — 반드시 KST로 되돌린 뒤 날짜를 뽑아야
+    한다.
+    """
+    return naive_utc.replace(tzinfo=UTC).astimezone(_KST).date()
+
+
+def _window_total(
+    db: Session, post_ids: list[int], metric: str, start: datetime, end: datetime
+) -> Decimal:
+    """`start` 이후 `end` 이전까지 새로 늘어난 양의 합. 17.3 본계산과 같은 델타 방식이다."""
+    start_vals = _values_before(db, post_ids, start)
+    end_vals = _values_before(db, post_ids, end)
+    total = Decimal(0)
+    for post_id in post_ids:
+        v_end = end_vals.get(post_id, {}).get(metric, Decimal(0))
+        v_start = start_vals.get(post_id, {}).get(metric, Decimal(0))
+        total += max(v_end - v_start, Decimal(0))
+    return total
+
+
+def _views_change_rate(
+    db: Session, post_ids: list[int], week_start: datetime, this_week_views: Decimal
+) -> Decimal | None:
+    """전주 대비 조회수 증감률(분수, 0.12 = +12%) (2026-08-28 추가).
+
+    **전주 총합이 0이면 `None`이다** — 지난주에 활동이 아예 없었으면(포스팅이
+    없었거나 있었어도 조회수가 0이었으면) "몇 % 늘었다"는 계산 자체가 무의미하다.
+    0으로 나누는 것도 아니고, "0에서 얼마가 늘었다"는 숫자를 만들어내는 것도
+    실제로 없던 기준선을 있는 척 지어내는 것과 같다.
+    """
+    last_week_start = week_start - timedelta(days=7)
+    last_week_views = _window_total(db, post_ids, METRIC_VIEWS, last_week_start, week_start)
+    if last_week_views == 0:
+        return None
+    return round((this_week_views - last_week_views) / last_week_views, 4)
+
+
+def _has_collection_in_range(
+    db: Session, post_ids: list[int], start: datetime, end: datetime
+) -> bool:
+    if not post_ids:
+        return False
+    return (
+        db.scalar(
+            select(SnsPostMetric.id)
+            .where(
+                SnsPostMetric.sns_post_id.in_(post_ids),
+                SnsPostMetric.metric_name == METRIC_VIEWS,
+                SnsPostMetric.collected_at >= start,
+                SnsPostMetric.collected_at < end,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _daily_views(
+    db: Session, post_ids: list[int], week_start: datetime
+) -> list[tuple[date, Decimal | None]]:
+    """이번 주(월~일, KST) 요일별 조회수 순증가 추이 (2026-08-28 추가).
+
+    **연동된 게시물 자체가 없으면 "잴 수 없다"가 아니라 "잴 대상이 없어 0"**이다
+    (17.3 총합과 같은 구분) — 전부 `0`으로 채운다.
+
+    게시물은 있는데 **그날 수집 기록이 하나도 없으면(수집 배치 장애 등) `0`이
+    아니라 `None`**이다. 값이 안 바뀐 것(진짜 0)과 아예 재지 못한 것(모름)은
+    다르다. 아직 지나지 않은 요일도 수집 기록이 없기는 마찬가지라 자연히
+    `None`으로 나온다 — 미래를 특별 취급할 필요가 없다.
+    """
+    if not post_ids:
+        return [(_kst_date(week_start + timedelta(days=i)), Decimal(0)) for i in range(7)]
+
+    cutoffs = [week_start + timedelta(days=i) for i in range(8)]
+    values_at_cutoff = [_values_before(db, post_ids, cutoff) for cutoff in cutoffs]
+
+    points: list[tuple[date, Decimal | None]] = []
+    for day in range(7):
+        day_start, day_end = cutoffs[day], cutoffs[day + 1]
+        if not _has_collection_in_range(db, post_ids, day_start, day_end):
+            points.append((_kst_date(day_start), None))
+            continue
+
+        start_vals, end_vals = values_at_cutoff[day], values_at_cutoff[day + 1]
+        total = Decimal(0)
+        for post_id in post_ids:
+            v_end = end_vals.get(post_id, {}).get(METRIC_VIEWS, Decimal(0))
+            v_start = start_vals.get(post_id, {}).get(METRIC_VIEWS, Decimal(0))
+            total += max(v_end - v_start, Decimal(0))
+        points.append((_kst_date(day_start), total))
+    return points
+
+
 def weekly_summary(
     db: Session, store: Store
-) -> tuple[datetime, list[tuple[str, Decimal, Decimal]]]:
+) -> tuple[
+    datetime,
+    list[tuple[str, Decimal, Decimal, Decimal | None, list[tuple[date, Decimal | None]]]],
+]:
     """가게의 플랫폼별 "이번 주(월~일, KST) 신규 조회수·좋아요 합산"을 계산한다 (API명세서 17.3).
 
     **플랫폼 API는 영상 하나짜리 누적 총합만 준다** — "이번 주에 새로 늘어난 양"은
@@ -243,11 +344,14 @@ def weekly_summary(
     단순히 지금 시점 누적 총합을 다 더하지 않는 이유는, 그러면 "이번 주"라는
     이름과 달리 오래된 영상의 평생 누적치까지 다 섞여 들어가기 때문이다.
 
-    (이번 주 시작 시각, [플랫폼별 (플랫폼, 이번 주 총 조회수, 이번 주 총 좋아요)])를
-    돌려준다 — 연결된 게시물이 없어도 0으로 채워 항상 두 플랫폼 다 나온다.
+    (이번 주 시작 시각, [플랫폼별 (플랫폼, 이번 주 총 조회수, 이번 주 총 좋아요,
+    전주 대비 조회수 증감률, 요일별 조회수 추이)])를 돌려준다 — 연결된 게시물이
+    없어도 총합은 0으로 채워 항상 두 플랫폼 다 나온다.
     """
     week_start = _week_start_utc(utcnow())
-    results: list[tuple[str, Decimal, Decimal]] = []
+    results: list[
+        tuple[str, Decimal, Decimal, Decimal | None, list[tuple[date, Decimal | None]]]
+    ] = []
     for platform in _SUPPORTED_PLATFORMS:
         post_ids = _linked_post_ids(db, store, platform)
         latest = latest_values(db, post_ids)
@@ -260,7 +364,11 @@ def weekly_summary(
                 baseline_v = baseline.get(post_id, {}).get(metric, Decimal(0))
                 totals[metric] += max(latest_v - baseline_v, Decimal(0))
 
-        results.append((platform, totals[METRIC_VIEWS], totals[METRIC_LIKES]))
+        change_rate = _views_change_rate(db, post_ids, week_start, totals[METRIC_VIEWS])
+        daily_views = _daily_views(db, post_ids, week_start)
+        results.append(
+            (platform, totals[METRIC_VIEWS], totals[METRIC_LIKES], change_rate, daily_views)
+        )
     return week_start, results
 
 

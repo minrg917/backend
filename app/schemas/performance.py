@@ -1,5 +1,7 @@
 """성과분석 요청/응답 스키마 (API명세서 17.1~17.4)."""
 
+from datetime import date
+
 from app.schemas.common import BaseSchema, MetricValue, UtcDatetime
 from app.schemas.video_format import VideoFormatSummary
 
@@ -31,6 +33,14 @@ class ComparisonResponse(BaseSchema):
     comparison: list[ComparisonItem]
 
 
+class DailyViewsPoint(BaseSchema):
+    # KST 기준 달력 날짜. 요일 라벨(월/화/…)은 프론트가 이 날짜로 계산한다.
+    date: date
+    # 그날 수집 기록이 없으면(수집 배치 장애, 또는 아직 지나지 않은 요일) null이다.
+    # "그날 조회수가 안 늘었다(0)"와 "그날은 재지 못했다(null)"는 다른 뜻이다.
+    views: MetricValue | None
+
+
 class PlatformWeeklyTotal(BaseSchema):
     platform: str
     # "이번 주 신규 증가분"의 합산이다 — 지금 시점 누적 총합이 아니다. 연결된
@@ -38,6 +48,13 @@ class PlatformWeeklyTotal(BaseSchema):
     # 없으면 진짜 0이 맞다).
     weekly_views: MetricValue
     weekly_likes: MetricValue
+    # 전주 대비 조회수 증감률(분수, 0.12 = +12%, 음수 가능). 전주 총합이 0이면
+    # (활동이 없었으면) 계산할 수 없어 null이다 — 17.2의 view_rate·save_rate와
+    # 같은 분수 표기 규칙이다.
+    views_change_rate: MetricValue | None
+    # 이번 주 월~일 요일별 조회수 추이(항상 7개). 좋아요는 추이 그래프가 없어
+    # daily_likes는 제공하지 않는다.
+    daily_views: list[DailyViewsPoint]
 
 
 class WeeklySummaryResponse(BaseSchema):

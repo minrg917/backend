@@ -433,6 +433,121 @@ def test_weekly_summary_ignores_posts_not_linked(
     assert instagram["weekly_views"] == 0
 
 
+def test_weekly_summary_daily_views_default_seven_zero_points_when_empty(
+    client: TestClient, auth_headers: dict[str, str], store_id: int
+) -> None:
+    """연동된 게시물 자체가 없으면 "못 잰다"가 아니라 "잴 대상이 없어 0"이다."""
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert len(instagram["daily_views"]) == 7
+    assert all(point["views"] == 0 for point in instagram["daily_views"])
+
+
+def test_weekly_summary_daily_views_null_when_no_collection_that_day(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """게시물은 있는데 이번 주엔 수집 기록이 하나도 없으면, 0이 아니라 전부 null이다."""
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "1000", week_start - timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert all(point["views"] is None for point in instagram["daily_views"])
+
+
+def test_weekly_summary_daily_views_zero_when_collected_but_unchanged(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """수집은 됐는데 값이 그대로면 "모름"이 아니라 진짜 "0"이다."""
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "1000", week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "views", "1000", week_start + timedelta(hours=2))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert instagram["daily_views"][0]["views"] == 0
+
+
+def test_weekly_summary_daily_views_splits_by_day_and_carries_forward(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """수집이 빠진 날은 이전 값을 그대로 들고 가되(0 계산용), 그 날 자체는 null로 표시한다."""
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "1000", week_start - timedelta(hours=1))
+    # 월요일: +100
+    _add_metric_at(db_session, post, "views", "1100", week_start + timedelta(hours=2))
+    # 화요일: 수집 없음
+    # 수요일: (화요일 몫까지 합쳐) +200
+    _add_metric_at(db_session, post, "views", "1300", week_start + timedelta(days=2, hours=3))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    points = instagram["daily_views"]
+    assert points[0]["views"] == 100
+    assert points[1]["views"] is None
+    assert points[2]["views"] == 200
+    assert all(point["views"] is None for point in points[3:])
+    # 요일 라벨은 KST 달력 날짜라 월요일부터 하루씩 순서대로 늘어야 한다.
+    dates = [point["date"] for point in points]
+    assert dates == sorted(dates)
+    assert len(set(dates)) == 7
+
+
+def test_weekly_summary_change_rate_null_without_last_week_baseline(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    """지난주 활동이 아예 없었으면(기준선 자체가 없으면) 증감률을 계산하지 않는다."""
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    _add_metric_at(db_session, post, "views", "500", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    assert instagram["views_change_rate"] is None
+
+
+def test_weekly_summary_change_rate_computes_week_over_week(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    last_week_start = week_start - timedelta(days=7)
+    _add_metric_at(db_session, post, "views", "500", last_week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "views", "800", week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "views", "1200", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    # 지난주 300(500→800) 대비 이번 주 400(800→1200) 증가 = +33.33%
+    assert Decimal(str(instagram["views_change_rate"])) == Decimal("0.3333")
+
+
+def test_weekly_summary_change_rate_can_be_negative(
+    client: TestClient, auth_headers: dict[str, str], db_session: Session, store_id: int
+) -> None:
+    post = _linked(db_session, _make_post(db_session, store_id, platform="INSTAGRAM"))
+    week_start = _week_start_utc(utcnow())
+    last_week_start = week_start - timedelta(days=7)
+    _add_metric_at(db_session, post, "views", "0", last_week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "views", "1000", week_start - timedelta(hours=1))
+    _add_metric_at(db_session, post, "views", "1200", week_start + timedelta(hours=1))
+
+    body = client.get(f"/sns-posts/weekly-summary?store_id={store_id}", headers=auth_headers).json()
+
+    instagram = next(p for p in body["platforms"] if p["platform"] == "INSTAGRAM")
+    # 지난주 1000 대비 이번 주 200 증가 = -80%
+    assert Decimal(str(instagram["views_change_rate"])) == Decimal("-0.8")
+
+
 def test_weekly_summary_hidden_from_other_user(
     client: TestClient, other_headers: dict[str, str], store_id: int
 ) -> None:
