@@ -271,6 +271,11 @@ class TaskSummary(BaseSchema):
     task_title: str | None
     task_status: TaskStatus
     display_order: int
+    # 촬영본이 없으면(아직 안 찍었으면) 둘 다 null이다 (2026-08-28 추가, FE 리포트).
+    # 앱을 껐다 켜도 이 값으로 재생·미리보기를 다시 그릴 수 있다 — 예전엔
+    # 태스크 보드에 아예 없어서, 방금 찍은 컷(로컬 파일 캐시)만 미리보기가 됐다.
+    footage_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class TaskBoardResponse(BaseSchema):
@@ -356,6 +361,9 @@ class FootageUploadResponse(BaseSchema):
     footage_type: FootageType
     footage_duration_sec: int | None
     task_status: TaskStatus
+    # ffmpeg 프레임 추출 실패 시(코덱 미지원 등) null — 부가 기능이라 업로드
+    # 자체는 성공으로 처리한다(2026-08-28 추가).
+    thumbnail_url: str | None = None
 
 
 # ---------------------------------------------------------------- 9.3 자동저장

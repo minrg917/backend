@@ -151,6 +151,8 @@ def test_board_returns_spec_fields(
         "task_title",
         "task_status",
         "display_order",
+        "footage_url",
+        "thumbnail_url",
     }
 
 
@@ -162,6 +164,41 @@ def test_board_is_empty_before_plan(
     assert body["tasks"] == []
     assert body["progress_rate"] == 0
     assert body["estimated_remaining_min"] is None
+
+
+def test_board_footage_null_before_upload(
+    client: TestClient, auth_headers: dict[str, str], planned: int
+) -> None:
+    """아직 안 찍은 태스크는 재생·미리보기 할 게 없으니 null이다."""
+    task = _board(client, auth_headers, planned)["tasks"][0]
+
+    assert task["footage_url"] is None
+    assert task["thumbnail_url"] is None
+
+
+def test_board_exposes_footage_after_upload(
+    client: TestClient, auth_headers: dict[str, str], planned: int
+) -> None:
+    """앱을 껐다 켜도 8.1 보드만으로 이전에 찍은 컷을 다시 재생할 수 있어야 한다.
+
+    예전엔 태스크 보드 응답에 `footage_url` 자체가 없어서, 방금 찍은 컷(로컬
+    파일 캐시)만 미리보기가 됐다(FE 리포트, 2026-08-28).
+    """
+    import io
+
+    task_id = _board(client, auth_headers, planned)["tasks"][0]["id"]
+    mp4_bytes = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
+    client.post(
+        f"/tasks/{task_id}/footage",
+        files={"file": ("take.mp4", io.BytesIO(mp4_bytes), "video/mp4")},
+        data={"footage_type": "VIDEO", "footage_duration_sec": 8},
+        headers=auth_headers,
+    )
+
+    task = next(t for t in _board(client, auth_headers, planned)["tasks"] if t["id"] == task_id)
+
+    assert task["footage_url"] is not None
+    assert task["footage_url"].startswith("http://")
 
 
 def test_tasks_are_ordered_by_display_order(

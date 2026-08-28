@@ -9,9 +9,9 @@
 
 import json
 import logging
-import subprocess
 import tempfile
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -21,8 +21,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.models.mixins import utcnow
 from app.models.shooting_task import ShootingTask
-from app.models.shorts_project import ShortsProject
+from app.models.shorts_project import ShortsProject, ShortsStatus
 from app.models.store import Store
 from app.models.storyboard_scene import StoryboardScene
 from app.models.user import User
@@ -30,9 +31,17 @@ from app.models.video_format import VideoFormat
 from app.models.video_output import RenderStatus, VideoOutput
 from app.schemas.shorts_project import TimelineItem
 from app.services import ai_client
+from app.services.media_thumbnail import generate_thumbnail
 from app.storage import StorageError, get_storage, to_public_url
 
 logger = logging.getLogger(__name__)
+
+# R14가 "최대 10분 넘게 걸릴 수 있다"던 것의 4배 가까운 여유값이다. 이보다 오래
+# PENDING/PROCESSING이면 AI 쪽이 응답 없이 멈춘 것으로 보고 우리 쪽에서 포기한다
+# — FE 리포트(2026-08-27)로 발견: AI가 내부적으로 무한 재시도하는 동안 우리 쪽
+# 상태는 영원히 PENDING/PROCESSING에 머물러 완료 푸시도 영영 안 가고, 폴링을
+# 멈추지 않는 한 계속 AI에 상태를 물어 비용도 쌓인다.
+_STUCK_TIMEOUT = timedelta(minutes=40)
 
 # 렌더링 진행률. ⚠️ 실제 진행률이 아니라 상태에서 매핑한 근사값이다.
 # 렌더러가 붙으면 실제 값을 받아 이 표를 대체한다.
@@ -71,8 +80,8 @@ def _map_status(ai_status: str) -> RenderStatus:
 def _build_footage_inputs(db: Session, project: ShortsProject) -> list[ai_client.FootageInput]:
     """촬영본 목록을 AI 요청 형식으로 만든다 (`docs/AI_연동_입출력.md` 16번 `videos[]`).
 
-    `shooting_scene_order`는 태스크가 연결된 장면의 순서다 — 장면에 연결 안 된
-    태스크(`scene_id`가 `NULL`)는 `null`로 보낸다(AI 문서가 명시적으로 허용).
+    정보형은 태스크 guide에 보존된 `shooting_element_id`를 보내고 장면 순서는
+    생략한다. 밈·챌린지는 기존처럼 태스크가 연결된 장면 순서를 보낸다.
     """
     rows = db.execute(
         select(ShootingTask, StoryboardScene.scene_order)
@@ -84,14 +93,21 @@ def _build_footage_inputs(db: Session, project: ShortsProject) -> list[ai_client
         .order_by(ShootingTask.display_order, ShootingTask.id)
     ).all()
     storage = get_storage()
-    return [
-        ai_client.FootageInput(
-            video_id=f"task_{task.id}",
-            footage_url=to_public_url(storage, task.footage_url) or "",
-            shooting_scene_order=scene_order or task.display_order,
+    footages: list[ai_client.FootageInput] = []
+    for task, scene_order in rows:
+        guide = task.guide or {}
+        shooting_element_id = guide.get("shooting_element_id")
+        footages.append(
+            ai_client.FootageInput(
+                video_id=f"task_{task.id}",
+                footage_url=to_public_url(storage, task.footage_url) or "",
+                shooting_scene_order=(
+                    None if shooting_element_id else (scene_order or task.display_order)
+                ),
+                shooting_element_id=(str(shooting_element_id) if shooting_element_id else None),
+            )
         )
-        for task, scene_order in rows
-    ]
+    return footages
 
 
 def _find_active_output(
@@ -199,9 +215,27 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     안 보였다. `error_message`는 AI가 실패 사유를 실어서 주는데도(`docs/AI_연동_
     입출력.md` 17번) 지금까지 버리고 있었다 — 실서버 편집 실패(project 56/50)를
     조사하다가 발견, DB 어디에도 실패 이유가 안 남아 있어 진단이 안 됐다.
+
+    **`_STUCK_TIMEOUT`을 넘기면 AI를 다시 묻지 않고 바로 FAILED로 끊는다**
+    (2026-08-28 추가). AI를 호출하기 전에 먼저 검사하므로, 멈춘 편집에 대해
+    더는 폴링 요청마다 AI를 부르지 않는다.
+
+    **렌더가 COMPLETED가 되면 `project.shorts_status`도 `COMPLETED`로 바꾼다**
+    (2026-08-28 추가, FE 리포트). 이전엔 `산출물`만 갱신하고 프로젝트 상태는
+    안 건드려서, 완성된 프로젝트가 "만들던 영상" 목록(DRAFT/IN_PROGRESS)에
+    계속 남아 있었다. `IN_PROGRESS` 쪽 전이는 스코프 밖이다 — 지금 요청받은
+    건 "렌더 완료 시 COMPLETED 전이"뿐이라, 수정 요청(14.3)으로 재렌더가 도는
+    동안 상태를 되돌리는 것까지는 하지 않는다.
     """
     still_in_progress = output.render_status in (RenderStatus.PENDING, RenderStatus.PROCESSING)
     if not still_in_progress or not output.ai_run_id:
+        return output
+
+    if utcnow() - output.created_at > _STUCK_TIMEOUT:
+        output.render_status = RenderStatus.FAILED
+        output.error_message = "편집이 시간 내에 완료되지 않았습니다. 다시 시도해주세요."
+        db.commit()
+        db.refresh(output)
         return output
 
     run = ai_client.get_editing_run(output.ai_run_id)
@@ -232,9 +266,10 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
         # 배경음악을 직접 입히지 않기로 확정돼 항상 false다(2026-08-24 결정,
         # `docs/AI_연동_입출력.md` 19번).
         output.has_licensed_audio = False
+        project = db.get(ShortsProject, output.shorts_project_id)
+        assert project is not None
+        project.shorts_status = ShortsStatus.COMPLETED
         if result.publishing is not None:
-            project = db.get(ShortsProject, output.shorts_project_id)
-            assert project is not None
             project.publish_kit = {
                 "title": result.publishing.title,
                 "caption": result.publishing.caption,
@@ -281,7 +316,7 @@ def _persist_rendered_video(
         storage = get_storage()
         with source_path.open("rb") as video_stream:
             storage.save(video_key, video_stream, content_type)
-        generated_cover = _generate_cover(storage, source_path, cover_key)
+        generated_cover = generate_thumbnail(storage, source_path, cover_key)
     except (httpx.HTTPError, OSError, StorageError) as exc:
         raise ai_client.AIServiceUnavailable from exc
     finally:
@@ -301,35 +336,6 @@ def _validate_renderer_url(source_url: str) -> None:
     if source.hostname.lower() not in allowed_hosts:
         logger.error("허용되지 않은 AI 렌더러 호스트: %s", source.hostname)
         raise ai_client.AIServiceUnavailable
-
-
-def _generate_cover(storage, source_path: Path, cover_key: str) -> str | None:
-    cover_path = source_path.with_suffix(".jpg")
-    try:
-        subprocess.run(
-            [
-                settings.FFMPEG_PATH,
-                "-y",
-                "-i",
-                str(source_path),
-                "-frames:v",
-                "1",
-                "-vf",
-                "thumbnail=30,scale=720:-2",
-                str(cover_path),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        with cover_path.open("rb") as cover_stream:
-            storage.save(cover_key, cover_stream, "image/jpeg")
-        return cover_key
-    except (OSError, subprocess.SubprocessError, StorageError):
-        logger.warning("최종 영상 커버 이미지 생성 실패", exc_info=True)
-        return None
-    finally:
-        cover_path.unlink(missing_ok=True)
 
 
 def latest_output(db: Session, project: ShortsProject) -> VideoOutput:
