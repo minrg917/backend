@@ -242,6 +242,29 @@ def test_dance_guide_segment_is_null_when_ai_omits_it(
     assert body["reference_video"]["end_ms"] is None
 
 
+def test_guide_exposes_minimum_recording_sec_for_informational_elements(
+    client: TestClient, auth_headers: dict[str, str], task_id: int, db_session: Session
+) -> None:
+    """정보형 촬영 요소는 최소 촬영 시간을 미리 보여줘야 사장님이 그만큼 찍는다."""
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"instructions": ["손동작이 보이게 촬영하세요."], "minimum_recording_sec": 15}
+    db_session.commit()
+
+    body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
+
+    assert body["overlay"]["minimum_recording_sec"] == 15
+
+
+def test_guide_minimum_recording_sec_null_without_requirement(
+    client: TestClient, auth_headers: dict[str, str], task_id: int
+) -> None:
+    """밈·챌린지 등 요구사항이 없는 태스크는 지어내지 않고 null이다."""
+    body = client.get(f"/tasks/{task_id}/guide", headers=auth_headers).json()
+
+    assert body["overlay"]["minimum_recording_sec"] is None
+
+
 def test_guide_hidden_from_other_user(
     client: TestClient, task_id: int, other_headers: dict[str, str]
 ) -> None:
@@ -258,6 +281,63 @@ def test_guide_requires_authentication(client: TestClient, task_id: int) -> None
 # ---------------------------------------------------------------- 9.2 촬영본 업로드
 
 
+def test_upload_rejects_footage_shorter_than_minimum(
+    client: TestClient, auth_headers: dict[str, str], task_id: int, db_session: Session
+) -> None:
+    """정보형 최소 촬영 시간 미달은 하드 블록한다.
+
+    짧은 촬영본이 편집까지 넘어가면 AI 쪽에서 뒤늦게 실패한다.
+    """
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"minimum_recording_sec": 15}
+    db_session.commit()
+
+    response = _upload(client, auth_headers, task_id, duration=10)
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_code"] == "FOOTAGE_TOO_SHORT"
+    assert body["minimum_recording_sec"] == 15
+
+
+def test_upload_rejects_missing_duration_when_minimum_required(
+    client: TestClient, auth_headers: dict[str, str], task_id: int, db_session: Session
+) -> None:
+    """길이를 확인할 수 없으면 조건을 만족한다고 지어낼 수 없으니 통과시키지 않는다."""
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"minimum_recording_sec": 15}
+    db_session.commit()
+
+    response = _upload(client, auth_headers, task_id, duration=None)
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "FOOTAGE_TOO_SHORT"
+
+
+def test_upload_accepts_footage_meeting_minimum(
+    client: TestClient, auth_headers: dict[str, str], task_id: int, db_session: Session
+) -> None:
+    task = db_session.get(ShootingTask, task_id)
+    assert task is not None
+    task.guide = {"minimum_recording_sec": 15}
+    db_session.commit()
+
+    response = _upload(client, auth_headers, task_id, duration=15)
+
+    assert response.status_code == 200, response.text
+
+
+def test_upload_ignores_minimum_when_no_requirement(
+    client: TestClient, auth_headers: dict[str, str], task_id: int
+) -> None:
+    """요구사항 자체가 없는(밈·챌린지) 태스크는 짧은 촬영본도 그대로 받는다."""
+    response = _upload(client, auth_headers, task_id, duration=1)
+
+    assert response.status_code == 200, response.text
+
+
 def test_upload_returns_spec_fields(
     client: TestClient, auth_headers: dict[str, str], task_id: int
 ) -> None:
@@ -271,6 +351,7 @@ def test_upload_returns_spec_fields(
         "footage_type",
         "footage_duration_sec",
         "task_status",
+        "thumbnail_url",
     }
     assert body["file_url"].startswith("http://")
 
@@ -303,6 +384,66 @@ def test_retake_overwrites_previous_file(
     assert first != second
     saved = list(temp_media_root.rglob("*.mp4"))
     assert len(saved) == 1
+
+
+# ---------------------------------------------------------------- 9.2 촬영본 썸네일 (2026-08-28)
+
+
+def test_upload_returns_generated_thumbnail(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """앱을 껐다 켜도 미리보기를 그릴 수 있도록, 업로드 시 대표 프레임을 저장해둔다."""
+    from app.services import footage
+
+    monkeypatch.setattr(footage, "generate_thumbnail", lambda storage, source_path, key: key)
+
+    body = _upload(client, auth_headers, task_id).json()
+
+    assert body["thumbnail_url"] is not None
+    assert body["thumbnail_url"].startswith("http://")
+
+
+def test_upload_thumbnail_null_when_generation_fails(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ffmpeg 실패(코덱 미지원 등)는 부가 기능 실패일 뿐이라 업로드 자체는 성공해야 한다."""
+    from app.services import footage
+
+    monkeypatch.setattr(footage, "generate_thumbnail", lambda storage, source_path, key: None)
+
+    response = _upload(client, auth_headers, task_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["thumbnail_url"] is None
+
+
+def test_retake_deletes_previous_thumbnail(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    temp_media_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """재촬영은 썸네일도 같이 덮어쓴다 — 옛 썸네일이 계속 쌓이면 안 된다."""
+    from app.services import footage
+
+    def fake_generate_thumbnail(storage, source_path, key):
+        del source_path
+        storage.save(key, io.BytesIO(b"thumb"), "image/jpeg")
+        return key
+
+    monkeypatch.setattr(footage, "generate_thumbnail", fake_generate_thumbnail)
+
+    _upload(client, auth_headers, task_id)
+    _upload(client, auth_headers, task_id, content=MP4_BYTES + b"second")
+
+    assert len(list(temp_media_root.rglob("*.jpg"))) == 1
 
 
 def test_upload_rejects_non_video(

@@ -83,7 +83,11 @@ def generate_plan(db: Session, project: ShortsProject, video_format_id: int) -> 
             task_title=task.task_title,
             task_status=TaskStatus.NOT_STARTED,
             display_order=task.display_order,
-            guide=task.guide,
+            guide=(
+                {**(task.guide or {}), "shooting_element_id": task.shooting_element_id}
+                if task.shooting_element_id is not None
+                else task.guide
+            ),
         )
         for task in guide.tasks
     )
