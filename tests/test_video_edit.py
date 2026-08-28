@@ -508,6 +508,73 @@ def test_result_stores_error_message_on_failure(
     assert output.error_message == "RendererError: recipe 검증 실패"
 
 
+def test_stuck_edit_times_out_without_calling_ai(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """40분 넘게 PENDING/PROCESSING이면 AI를 더 묻지 않고 FAILED로 끊는다 (2026-08-28).
+
+    AI가 내부적으로 무한 재시도하는 동안 우리 쪽 상태가 영원히 멈춰 있으면 완료
+    푸시도 안 가고, 폴링마다 AI를 불러 비용만 쌓인다(FE 리포트).
+    """
+    from datetime import timedelta
+
+    from app.models.mixins import utcnow
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    output_id = _start_edit(client, auth_headers, project_id).json()["video_output_id"]
+
+    output = db_session.get(VideoOutput, output_id)
+    output.created_at = utcnow() - timedelta(minutes=41)
+    db_session.commit()
+
+    def _fail_if_called(run_id: str) -> "ai_client.EditingRun":
+        raise AssertionError("타임아웃 처리된 편집은 AI를 다시 묻지 않아야 한다")
+
+    monkeypatch.setattr(ai_client, "get_editing_run", _fail_if_called)
+
+    result = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert result["render_status"] == "FAILED"
+    assert "시간 내" in result["error_message"]
+
+
+def test_edit_within_timeout_still_polls_ai(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """타임아웃 전에는 평소처럼 AI 상태를 그대로 반영해야 한다(회귀 방지)."""
+    from datetime import timedelta
+
+    from app.models.mixins import utcnow
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    output_id = _start_edit(client, auth_headers, project_id).json()["video_output_id"]
+
+    output = db_session.get(VideoOutput, output_id)
+    output.created_at = utcnow() - timedelta(minutes=39)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(run_id=run_id, status="RUNNING", progress=50),
+    )
+
+    result = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert result["render_status"] == "PROCESSING"
+    assert result["progress_percent"] == 50
+
+
 def test_revise_rejects_unknown_request_type(
     client: TestClient, auth_headers: dict[str, str], project_id: int
 ) -> None:

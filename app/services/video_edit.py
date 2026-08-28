@@ -12,6 +12,7 @@ import logging
 import subprocess
 import tempfile
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.models.mixins import utcnow
 from app.models.shooting_task import ShootingTask
 from app.models.shorts_project import ShortsProject
 from app.models.store import Store
@@ -33,6 +35,13 @@ from app.services import ai_client
 from app.storage import StorageError, get_storage, to_public_url
 
 logger = logging.getLogger(__name__)
+
+# R14가 "최대 10분 넘게 걸릴 수 있다"던 것의 4배 가까운 여유값이다. 이보다 오래
+# PENDING/PROCESSING이면 AI 쪽이 응답 없이 멈춘 것으로 보고 우리 쪽에서 포기한다
+# — FE 리포트(2026-08-27)로 발견: AI가 내부적으로 무한 재시도하는 동안 우리 쪽
+# 상태는 영원히 PENDING/PROCESSING에 머물러 완료 푸시도 영영 안 가고, 폴링을
+# 멈추지 않는 한 계속 AI에 상태를 물어 비용도 쌓인다.
+_STUCK_TIMEOUT = timedelta(minutes=40)
 
 # 렌더링 진행률. ⚠️ 실제 진행률이 아니라 상태에서 매핑한 근사값이다.
 # 렌더러가 붙으면 실제 값을 받아 이 표를 대체한다.
@@ -199,9 +208,20 @@ def sync_output(db: Session, output: VideoOutput) -> VideoOutput:
     안 보였다. `error_message`는 AI가 실패 사유를 실어서 주는데도(`docs/AI_연동_
     입출력.md` 17번) 지금까지 버리고 있었다 — 실서버 편집 실패(project 56/50)를
     조사하다가 발견, DB 어디에도 실패 이유가 안 남아 있어 진단이 안 됐다.
+
+    **`_STUCK_TIMEOUT`을 넘기면 AI를 다시 묻지 않고 바로 FAILED로 끊는다**
+    (2026-08-28 추가). AI를 호출하기 전에 먼저 검사하므로, 멈춘 편집에 대해
+    더는 폴링 요청마다 AI를 부르지 않는다.
     """
     still_in_progress = output.render_status in (RenderStatus.PENDING, RenderStatus.PROCESSING)
     if not still_in_progress or not output.ai_run_id:
+        return output
+
+    if utcnow() - output.created_at > _STUCK_TIMEOUT:
+        output.render_status = RenderStatus.FAILED
+        output.error_message = "편집이 시간 내에 완료되지 않았습니다. 다시 시도해주세요."
+        db.commit()
+        db.refresh(output)
         return output
 
     run = ai_client.get_editing_run(output.ai_run_id)
