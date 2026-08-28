@@ -1,7 +1,6 @@
 """AI 자동편집 테스트 (API명세서 14.1 편집시작 / 14.2 결과조회 / 14.3 수정요청)."""
 
 import io
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -62,7 +61,7 @@ def test_renderer_download_uses_internal_auth_and_persists_cover(
     monkeypatch.setattr(video_edit, "get_storage", lambda: FakeStorage())
     monkeypatch.setattr(
         video_edit,
-        "_generate_cover",
+        "generate_thumbnail",
         lambda storage, source_path, cover_key: cover_key,
     )
 
@@ -73,34 +72,6 @@ def test_renderer_download_uses_internal_auth_and_persists_cover(
     assert saved[video_key] == MP4_BYTES
     assert cover_key.endswith(".jpg")
     assert captured["headers"] == {"X-Internal-API-Key": "shared-secret"}
-
-
-def test_generate_cover_uses_representative_thumbnail_filter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "result.mp4"
-    source.write_bytes(MP4_BYTES)
-    saved: dict[str, bytes] = {}
-    captured: list[str] = []
-
-    class FakeStorage:
-        def save(self, key, stream, content_type=None):
-            assert content_type == "image/jpeg"
-            saved[key] = stream.read()
-            return key
-
-    def fake_run(command, **kwargs):
-        del kwargs
-        captured.extend(command)
-        Path(command[-1]).write_bytes(b"jpeg")
-
-    monkeypatch.setattr(video_edit.subprocess, "run", fake_run)
-
-    key = video_edit._generate_cover(FakeStorage(), source, "outputs/result.jpg")
-
-    assert key == "outputs/result.jpg"
-    assert "thumbnail=30,scale=720:-2" in captured
-    assert saved[key] == b"jpeg"
 
 
 def test_build_footage_inputs_prefers_informational_element_id(
@@ -533,6 +504,105 @@ def test_result_stores_error_message_on_failure(
 
     output = db_session.get(VideoOutput, output_id)
     assert output.error_message == "RendererError: recipe 검증 실패"
+
+
+def test_render_completion_marks_project_completed(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """렌더가 끝나면 프로젝트도 COMPLETED가 돼야 "만들던 영상" 목록에서 빠진다.
+
+    FE 리포트(2026-08-28): 렌더는 끝나도 `shorts_status`가 안 바뀌어 완성된
+    프로젝트가 계속 진행 중 목록에 남아 있었다.
+    """
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    _start_edit(client, auth_headers, project_id)
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(run_id=run_id, status="COMPLETED"),
+    )
+    monkeypatch.setattr(
+        ai_client, "get_editing_run_result", lambda run_id: ai_client.EditingRunResult()
+    )
+
+    client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers)
+
+    project = db_session.get(ShortsProject, project_id)
+    assert project.shorts_status == "COMPLETED"
+
+
+def test_stuck_edit_times_out_without_calling_ai(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """40분 넘게 PENDING/PROCESSING이면 AI를 더 묻지 않고 FAILED로 끊는다 (2026-08-28).
+
+    AI가 내부적으로 무한 재시도하는 동안 우리 쪽 상태가 영원히 멈춰 있으면 완료
+    푸시도 안 가고, 폴링마다 AI를 불러 비용만 쌓인다(FE 리포트).
+    """
+    from datetime import timedelta
+
+    from app.models.mixins import utcnow
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    output_id = _start_edit(client, auth_headers, project_id).json()["video_output_id"]
+
+    output = db_session.get(VideoOutput, output_id)
+    output.created_at = utcnow() - timedelta(minutes=41)
+    db_session.commit()
+
+    def _fail_if_called(run_id: str) -> "ai_client.EditingRun":
+        raise AssertionError("타임아웃 처리된 편집은 AI를 다시 묻지 않아야 한다")
+
+    monkeypatch.setattr(ai_client, "get_editing_run", _fail_if_called)
+
+    result = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert result["render_status"] == "FAILED"
+    assert "시간 내" in result["error_message"]
+
+
+def test_edit_within_timeout_still_polls_ai(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    project_id: int,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """타임아웃 전에는 평소처럼 AI 상태를 그대로 반영해야 한다(회귀 방지)."""
+    from datetime import timedelta
+
+    from app.models.mixins import utcnow
+    from app.services import ai_client
+
+    _upload_all(client, auth_headers, project_id)
+    output_id = _start_edit(client, auth_headers, project_id).json()["video_output_id"]
+
+    output = db_session.get(VideoOutput, output_id)
+    output.created_at = utcnow() - timedelta(minutes=39)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_client,
+        "get_editing_run",
+        lambda run_id: ai_client.EditingRun(run_id=run_id, status="RUNNING", progress=50),
+    )
+
+    result = client.get(f"/shorts-projects/{project_id}/edit/result", headers=auth_headers).json()
+
+    assert result["render_status"] == "PROCESSING"
+    assert result["progress_percent"] == 50
 
 
 def test_revise_rejects_unknown_request_type(

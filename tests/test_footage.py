@@ -271,6 +271,7 @@ def test_upload_returns_spec_fields(
         "footage_type",
         "footage_duration_sec",
         "task_status",
+        "thumbnail_url",
     }
     assert body["file_url"].startswith("http://")
 
@@ -303,6 +304,66 @@ def test_retake_overwrites_previous_file(
     assert first != second
     saved = list(temp_media_root.rglob("*.mp4"))
     assert len(saved) == 1
+
+
+# ---------------------------------------------------------------- 9.2 촬영본 썸네일 (2026-08-28)
+
+
+def test_upload_returns_generated_thumbnail(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """앱을 껐다 켜도 미리보기를 그릴 수 있도록, 업로드 시 대표 프레임을 저장해둔다."""
+    from app.services import footage
+
+    monkeypatch.setattr(footage, "generate_thumbnail", lambda storage, source_path, key: key)
+
+    body = _upload(client, auth_headers, task_id).json()
+
+    assert body["thumbnail_url"] is not None
+    assert body["thumbnail_url"].startswith("http://")
+
+
+def test_upload_thumbnail_null_when_generation_fails(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ffmpeg 실패(코덱 미지원 등)는 부가 기능 실패일 뿐이라 업로드 자체는 성공해야 한다."""
+    from app.services import footage
+
+    monkeypatch.setattr(footage, "generate_thumbnail", lambda storage, source_path, key: None)
+
+    response = _upload(client, auth_headers, task_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["thumbnail_url"] is None
+
+
+def test_retake_deletes_previous_thumbnail(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    task_id: int,
+    temp_media_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """재촬영은 썸네일도 같이 덮어쓴다 — 옛 썸네일이 계속 쌓이면 안 된다."""
+    from app.services import footage
+
+    def fake_generate_thumbnail(storage, source_path, key):
+        del source_path
+        storage.save(key, io.BytesIO(b"thumb"), "image/jpeg")
+        return key
+
+    monkeypatch.setattr(footage, "generate_thumbnail", fake_generate_thumbnail)
+
+    _upload(client, auth_headers, task_id)
+    _upload(client, auth_headers, task_id, content=MP4_BYTES + b"second")
+
+    assert len(list(temp_media_root.rglob("*.jpg"))) == 1
 
 
 def test_upload_rejects_non_video(

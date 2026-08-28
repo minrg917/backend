@@ -1,12 +1,15 @@
 """촬영 가이드·촬영본 로직 (API명세서 9.1, 9.2)."""
 
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.shooting_task import ShootingTask, TaskStatus
+from app.models.shooting_task import FootageType, ShootingTask, TaskStatus
 from app.models.shorts_project import ShortsProject
 from app.models.storyboard_scene import StoryboardScene
 from app.models.video_format import VideoFormat
@@ -17,6 +20,7 @@ from app.schemas.shorts_project import (
     ReferenceVideo,
     TaskGuideResponse,
 )
+from app.services.media_thumbnail import generate_thumbnail
 from app.services.store_photo import validate_upload
 from app.storage import Storage
 
@@ -127,6 +131,11 @@ def upload_footage(
 
     업로드 성공이 `task_status`를 `DONE`으로 만드는 **유일한 정상 경로**다
     (2026-08-21 확정).
+
+    **썸네일도 함께 생성한다**(2026-08-28 추가, FE 리포트) — 앱을 껐다 켜면
+    로컬 파일 경로를 몰라 첫 프레임을 못 그리는 문제였다. 태스크 보드(8.1)가
+    지금까지 `footage_url` 자체도 안 내려주고 있었던 것도 같이 고쳤다
+    (`app/schemas/shorts_project.py::TaskSummary`).
     """
     extension = validate_upload(
         upload,
@@ -138,12 +147,20 @@ def upload_footage(
     )
 
     previous_key = task.footage_url
-    key = f"projects/{task.shorts_project_id}/footage/{uuid.uuid4().hex}{extension}"
-    storage.save(key, upload.file, upload.content_type)
+    previous_thumbnail_key = task.thumbnail_url
+    identifier = uuid.uuid4().hex
+    key = f"projects/{task.shorts_project_id}/footage/{identifier}{extension}"
+
+    thumbnail_key: str | None = None
+    if footage_type == FootageType.VIDEO:
+        thumbnail_key = _save_video_with_thumbnail(storage, upload, key, identifier, task)
+    else:
+        storage.save(key, upload.file, upload.content_type)
 
     task.footage_url = key
     task.footage_type = footage_type
     task.footage_duration_sec = footage_duration_sec
+    task.thumbnail_url = thumbnail_key
     task.task_status = TaskStatus.DONE
     db.commit()
     db.refresh(task)
@@ -151,5 +168,27 @@ def upload_footage(
     # DB를 먼저 갱신하고 옛 파일을 지운다. 반대 순서면 저장 실패 시 파일만 사라진다.
     if previous_key and previous_key != key:
         storage.delete(previous_key)
+    if previous_thumbnail_key and previous_thumbnail_key != thumbnail_key:
+        storage.delete(previous_thumbnail_key)
 
     return task
+
+
+def _save_video_with_thumbnail(
+    storage: Storage, upload: UploadFile, key: str, identifier: str, task: ShootingTask
+) -> str | None:
+    """영상을 저장하면서 대표 프레임도 함께 뽑아 저장한다.
+
+    ffmpeg로 뽑으려면 로컬 파일 경로가 필요해서, 스트림을 바로 올리는 대신
+    임시 파일에 먼저 받아둔다(R14 완성 영상 커버·`video_edit.py`와 같은 패턴).
+    """
+    with tempfile.NamedTemporaryFile(delete=False) as stream:
+        source_path = Path(stream.name)
+        shutil.copyfileobj(upload.file, stream)
+    try:
+        with source_path.open("rb") as video_stream:
+            storage.save(key, video_stream, upload.content_type)
+        thumbnail_key = f"projects/{task.shorts_project_id}/footage/{identifier}.jpg"
+        return generate_thumbnail(storage, source_path, thumbnail_key)
+    finally:
+        source_path.unlink(missing_ok=True)
