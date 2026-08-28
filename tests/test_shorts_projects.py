@@ -161,14 +161,17 @@ def test_menu_purpose_accepts_detail_tag_and_menu_id(
 
     response = client.patch(
         f"/shorts-projects/{project_id}",
-        json={"menu_id": menu_id, "promotion_detail": {"detail_tag": "대표메뉴"}},
+        json={
+            "menu_id": menu_id,
+            "promotion_detail": {"detail_tag": "대표메뉴", "menu_name": "떡볶이"},
+        },
         headers=auth_headers,
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["menu_id"] == menu_id
-    assert body["promotion_detail"] == {"detail_tag": "대표메뉴"}
+    assert body["promotion_detail"] == {"detail_tag": "대표메뉴", "menu_name": "떡볶이"}
 
 
 def test_event_purpose_accepts_event_fields(
@@ -202,12 +205,20 @@ def test_store_purpose_accepts_multiple_elements(
 
     response = client.patch(
         f"/shorts-projects/{project_id}",
-        json={"promotion_detail": {"elements": ["공간", "사장님/직원"]}},
+        json={
+            "promotion_detail": {
+                "elements": ["공간", "사장님/직원"],
+                "description": "통창으로 햇빛이 드는 좌석",
+            }
+        },
         headers=auth_headers,
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["promotion_detail"] == {"elements": ["공간", "사장님/직원"]}
+    assert response.json()["promotion_detail"] == {
+        "elements": ["공간", "사장님/직원"],
+        "description": "통창으로 햇빛이 드는 좌석",
+    }
 
 
 def test_customer_purpose_accepts_goal_and_metric(
