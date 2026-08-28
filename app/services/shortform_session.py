@@ -132,35 +132,6 @@ def _serialize_recommendation(recommendation: Any) -> dict[str, Any]:
     }
 
 
-def _collect_recommendations(
-    store: Store,
-    session_token: str,
-    menu: StoreMenu | None,
-    first: Any,
-    shown_before_first: list[str],
-    count: int = _RECOMMENDATION_BATCH_SIZE,
-) -> tuple[list[Any], list[str]]:
-    """`first`에 이어 "다시 추천 받기"를 필요한 개수만큼 반복 호출해 묶는다.
-
-    화면에 한 번에 여러 장을 보여주기 위한 백엔드 쪽 오케스트레이션이다 — AI 계약
-    자체는 안 바뀐다(호출 한 번에 1개).
-    """
-    recommendations = [first]
-    shown = [*shown_before_first, first.editing_template_id]
-    while len(recommendations) < count:
-        try:
-            next_recommendation = ai_client.get_next_shortform_recommendation(
-                store, session_token, menu, shown
-            )
-        except ai_client.AINoMoreRecommendations:
-            break
-        if next_recommendation.editing_template_id in shown:
-            break
-        recommendations.append(next_recommendation)
-        shown.append(next_recommendation.editing_template_id)
-    return recommendations, shown
-
-
 def has_more_recommendations(db: Session, session: ShortformSession) -> bool:
     """동기화된 ACTIVE 포맷 중 아직 표시하지 않은 템플릿이 있는지 확인한다."""
     if session.session_token.startswith("sf_placeholder_"):
@@ -188,8 +159,7 @@ def submit_turn(
     연동 시 이 값을 AI 서버 요청에 그대로 실어 보내야 하므로, 여기서 흘려버리면
     연동 시점에 호출부(라우터→서비스)까지 다시 손봐야 한다.
 
-    `action`이 추천을 냈으면(`result.recommendation is not None`) 화면에 한 번에
-    보여줄 개수(`_RECOMMENDATION_BATCH_SIZE`)만큼 채워서 함께 돌려준다.
+    `action`이 추천을 냈으면 AI가 한 번의 응답으로 내려준 추천 3개를 그대로 돌려준다.
     """
     if session.status is not SessionStatus.ACTIVE:
         raise SessionNotActive
@@ -204,14 +174,12 @@ def submit_turn(
 
     session.project_state = result.project_state
     recommendations: list[Any] = []
-    if result.recommendation is not None:
-        recommendations, shown = _collect_recommendations(
-            store,
-            session.session_token,
-            menu,
-            result.recommendation,
-            session.shown_template_ids or [],
-        )
+    if result.recommendations:
+        recommendations = result.recommendations[:_RECOMMENDATION_BATCH_SIZE]
+        shown = list(session.shown_template_ids or [])
+        for recommendation in recommendations:
+            if recommendation.editing_template_id not in shown:
+                shown.append(recommendation.editing_template_id)
         session.last_recommendation = [_serialize_recommendation(r) for r in recommendations]
         session.shown_template_ids = shown
     db.commit()
@@ -234,14 +202,16 @@ def get_next_recommendation(db: Session, session: ShortformSession) -> tuple[lis
     shown_before = session.shown_template_ids or []
 
     try:
-        first = ai_client.get_next_shortform_recommendation(
+        recommendations = ai_client.get_next_shortform_recommendations(
             store, session.session_token, menu, shown_before
         )
     except ai_client.AINoMoreRecommendations as exc:
         raise RecommendationsExhausted from exc
-    recommendations, shown = _collect_recommendations(
-        store, session.session_token, menu, first, shown_before
-    )
+    recommendations = recommendations[:_RECOMMENDATION_BATCH_SIZE]
+    shown = list(shown_before)
+    for recommendation in recommendations:
+        if recommendation.editing_template_id not in shown:
+            shown.append(recommendation.editing_template_id)
 
     session.last_recommendation = [_serialize_recommendation(r) for r in recommendations]
     session.shown_template_ids = shown

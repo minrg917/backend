@@ -13,12 +13,34 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.video_format import VideoFormat
+from app.services import ai_client
 
 STORE_BODY: dict[str, Any] = {
     "name": "행복분식",
     "category": "분식",
     "address": "서울 강남구 테헤란로 1길 10",
 }
+
+
+def _ai_recommendation(template_id: str) -> dict[str, Any]:
+    return {
+        "recommendation_id": f"rec-{template_id}",
+        "project_title": f"project-{template_id}",
+        "title": f"title-{template_id}",
+        "concept": f"concept-{template_id}",
+        "editing_template_id": template_id,
+        "editing_template_version": 1,
+    }
+
+
+def test_ai_recommendation_batch_requires_three_distinct_templates() -> None:
+    assert ai_client._recommendations([]) == []
+    valid = [_ai_recommendation(f"template-{index}") for index in range(3)]
+    assert len(ai_client._recommendations(valid)) == 3
+
+    duplicate = [valid[0], valid[1], _ai_recommendation("template-1")]
+    with pytest.raises(ai_client.AIServiceUnavailable):
+        ai_client._recommendations(duplicate)
 
 
 @pytest.fixture(autouse=True)
@@ -118,8 +140,7 @@ def test_turn_moves_straight_to_recommend(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["action"] == "RECOMMEND"
-    # 화면에 카드 3장을 한 번에 보여준다(2026-08-26) — AI는 호출 한 번에 1개만
-    # 주지만, 백엔드가 "다시 추천 받기"를 이어서 호출해 묶는다.
+    # AI가 한 번의 응답으로 내린 서로 다른 카드 3장을 그대로 보여준다.
     assert len(body["recommendations"]) == 3
     for recommendation in body["recommendations"]:
         assert set(recommendation) == {

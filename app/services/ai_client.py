@@ -164,6 +164,20 @@ def _recommendation(item: dict[str, Any] | None) -> "Recommendation | None":
     )
 
 
+def _recommendations(items: list[dict[str, Any]] | None) -> list["Recommendation"]:
+    recommendations = [
+        recommendation
+        for item in items or []
+        if (recommendation := _recommendation(item)) is not None
+    ]
+    if not recommendations:
+        return []
+    template_ids = [item.editing_template_id for item in recommendations]
+    if len(recommendations) != 3 or len(set(template_ids)) != 3:
+        raise AIServiceUnavailable
+    return recommendations
+
+
 @dataclass(frozen=True)
 class PlannedScene:
     """AI가 만든 장면 하나."""
@@ -824,7 +838,7 @@ class SessionOption:
 
 @dataclass(frozen=True)
 class Recommendation:
-    """숏폼 Agent가 추천한 영상편집템플릿 1개 (API명세서 AI_연동_입출력.md 9·10번).
+    """숏폼 Agent의 3개 묶음에 포함된 영상편집템플릿 1개.
 
     `editing_template_id`·`editing_template_version`은 우리 `video_formats`가 아니라
     **AI 서버 쪽 템플릿 카탈로그**를 가리킨다. 세션이 끝나 프로젝트로 확정될 때
@@ -859,7 +873,7 @@ class TurnResult:
     assistant_message: str | None
     project_state: dict[str, Any]
     options: list[SessionOption]
-    recommendation: Recommendation | None = None
+    recommendations: list[Recommendation] = field(default_factory=list)
     is_placeholder: bool = False
 
 
@@ -973,14 +987,16 @@ def submit_shortform_turn(
         assistant_message=data.get("assistant_message"),
         project_state=dict(data.get("project_state") or project_state),
         options=[_option(item) for item in data.get("options") or []],
-        recommendation=_recommendation(data.get("recommendation")),
+        recommendations=_recommendations(data.get("recommendations")),
     )
 
 
 def _placeholder_turn(
     store: Store, project_state: dict[str, Any], representative_menu: StoreMenu | None
 ) -> TurnResult:
-    recommendation = _placeholder_recommendation(store, representative_menu)
+    recommendations = [
+        _placeholder_recommendation(store, representative_menu) for _ in range(3)
+    ]
     new_state = dict(project_state)
     new_state["ready_for_confirmation"] = True
     if representative_menu is not None:
@@ -994,18 +1010,18 @@ def _placeholder_turn(
         assistant_message=None,
         project_state=new_state,
         options=[],
-        recommendation=recommendation,
+        recommendations=recommendations,
         is_placeholder=True,
     )
 
 
-def get_next_shortform_recommendation(
+def get_next_shortform_recommendations(
     store: Store,
     session_token: str,
     representative_menu: StoreMenu | None,
     shown_template_ids: list[str],
-) -> Recommendation:
-    """다시 추천 받기. 이미 보여준 템플릿은 제외한다.
+) -> list[Recommendation]:
+    """서로 다른 추천 3개를 한 번에 다시 받는다. 이미 본 템플릿은 제외한다.
 
     AI 서버가 설정돼 있지 않으면 매번 새 임시 템플릿을 만들어 돌려준다 — 실제로는
     같은 후보를 반복해 추천하지 않는다는 것만 흉내 낸다.
@@ -1013,7 +1029,9 @@ def get_next_shortform_recommendation(
     del shown_template_ids  # placeholder는 항상 새 템플릿을 만들어 자동으로 안 겹친다
     if not is_enabled():
         if settings.AI_SHORTFORM_PLACEHOLDERS_ENABLED:
-            return _placeholder_recommendation(store, representative_menu)
+            return [
+                _placeholder_recommendation(store, representative_menu) for _ in range(3)
+            ]
         raise AIServiceConfigurationError
 
     del store, representative_menu
@@ -1021,10 +1039,10 @@ def get_next_shortform_recommendation(
         "POST",
         f"/api/v1/shortform-sessions/{session_token}/recommendations/next",
     )
-    recommendation = _recommendation(data.get("recommendation"))
-    if recommendation is None:
+    recommendations = _recommendations(data.get("recommendations"))
+    if not recommendations:
         raise AIServiceUnavailable
-    return recommendation
+    return recommendations
 
 
 def _placeholder_recommendation(
