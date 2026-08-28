@@ -117,7 +117,7 @@ def _validate_promotion_detail(purpose: PromotionPurpose, detail: dict[str, Any]
         raise InvalidPromotionDetail(
             f"홍보 목적이 '{purpose.value}'일 때 허용되지 않는 상세 정보입니다. {reasons}"
         ) from exc
-    return validated.model_dump(mode="json")
+    return validated.model_dump(mode="json", exclude_none=True)
 
 
 def _validate_menu(db: Session, project: ShortsProject, menu_id: int) -> None:

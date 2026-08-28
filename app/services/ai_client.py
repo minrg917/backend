@@ -25,7 +25,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.core.exceptions import AppError, UnprocessableEntityError
+from app.core.exceptions import AppError, ConflictError, UnprocessableEntityError
 from app.models.shorts_project import ShortsProject
 from app.models.store import Store
 from app.models.store_menu import StoreMenu
@@ -44,6 +44,11 @@ class AIServiceConfigurationError(AppError):
     status_code = 503
     error_code = "AI_SERVICE_CONFIGURATION_ERROR"
     message = "AI 서버 연동 설정을 확인해주세요."
+
+
+class AINoMoreRecommendations(ConflictError):
+    error_code = "NO_MORE_SHORTFORM_RECOMMENDATIONS"
+    message = "현재 조건에 맞는 추천을 모두 확인했습니다."
 
 
 class AITemplateNotLinked(UnprocessableEntityError):
@@ -81,7 +86,14 @@ def _request_json(
     if response.status_code == 401:
         logger.error("AI 서버 내부 인증 실패: %s %s", method, path)
         raise AIServiceConfigurationError
-    if response.status_code in {422, 429, 503}:
+    if response.status_code == 409:
+        try:
+            detail = response.json().get("detail") or {}
+        except ValueError:
+            detail = {}
+        if isinstance(detail, dict) and detail.get("code") == "NO_MORE_SHORTFORM_RECOMMENDATIONS":
+            raise AINoMoreRecommendations
+    if response.status_code in {409, 422, 429, 503}:
         logger.warning(
             "AI 서버가 요청을 처리할 준비가 되지 않음: %s %s -> %s",
             method,
@@ -128,7 +140,7 @@ def _promotion_subject_name(
     if menu_name:
         return menu_name
     detail = project.promotion_detail or {}
-    for key in ("name", "title", "event_name", "subject"):
+    for key in ("name", "title", "menu_name", "event_name", "description", "subject"):
         value = str(detail.get(key) or "").strip()
         if value:
             return value
@@ -869,7 +881,9 @@ def start_shortform_session(
     AI 서버가 설정돼 있지 않으면 임시 인사말을 돌려준다.
     """
     if not is_enabled():
-        return _placeholder_greeting(store)
+        if settings.AI_SHORTFORM_PLACEHOLDERS_ENABLED:
+            return _placeholder_greeting(store)
+        raise AIServiceConfigurationError
 
     data = _request_json(
         "POST",
@@ -944,7 +958,9 @@ def submit_shortform_turn(
     AI 서버가 설정돼 있지 않으면 임시 결과를 돌려준다.
     """
     if not is_enabled():
-        return _placeholder_turn(store, project_state, representative_menu)
+        if settings.AI_SHORTFORM_PLACEHOLDERS_ENABLED:
+            return _placeholder_turn(store, project_state, representative_menu)
+        raise AIServiceConfigurationError
 
     del store, representative_menu
     data = _request_json(
@@ -996,7 +1012,9 @@ def get_next_shortform_recommendation(
     """
     del shown_template_ids  # placeholder는 항상 새 템플릿을 만들어 자동으로 안 겹친다
     if not is_enabled():
-        return _placeholder_recommendation(store, representative_menu)
+        if settings.AI_SHORTFORM_PLACEHOLDERS_ENABLED:
+            return _placeholder_recommendation(store, representative_menu)
+        raise AIServiceConfigurationError
 
     del store, representative_menu
     data = _request_json(
