@@ -398,7 +398,11 @@ def get_shooting_guide(
     for index, item in enumerate(source_tasks, start=1):
         scene_index = item.get("scene_index")
         if scene_index is None and item.get("shooting_scene_order") is not None:
-            scene_index = int(item["shooting_scene_order"]) - 1
+            # 1-인덱스 계약이다. 0 이하가 오면(AI 쪽 오류) -1 같은 음수가 나와
+            # 파이썬 음수 인덱싱으로 엉뚱한(마지막) 장면에 조용히 연결되므로
+            # 차라리 "모른다"로 둔다(2026-08-28, 코드리뷰로 발견).
+            raw_order = int(item["shooting_scene_order"])
+            scene_index = raw_order - 1 if raw_order >= 1 else None
         tasks.append(
             PlannedTask(
                 display_order=int(item.get("display_order") or index),

@@ -111,6 +111,44 @@ def test_shooting_guide_maps_scene_and_task(monkeypatch: pytest.MonkeyPatch) -> 
     assert captured["query_params"]["promotion_subject"] == "떡볶이"
 
 
+def test_shooting_guide_treats_zero_scene_order_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`shooting_scene_order`는 1-인덱스 계약이다. 0(또는 그 이하)이 오면 `-1` 같은
+
+    음수로 변환돼 파이썬 음수 인덱싱 때문에 마지막 장면에 조용히 잘못 연결될 수
+    있어(2026-08-28, 코드리뷰로 발견), 대신 "모른다"(`None`)로 떨어뜨린다.
+    """
+    monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
+    monkeypatch.setattr(
+        ai_client,
+        "_request_json",
+        lambda *args, **kwargs: {
+            "estimated_shooting_sec": 480,
+            "difficulty": "하",
+            "scenes": [{"scene_order": 1, "scene_description": "완성 메뉴"}],
+            "tasks": [
+                {"display_order": 1, "task_title": "완성 메뉴 촬영", "shooting_scene_order": 0}
+            ],
+        },
+    )
+    video_format = VideoFormat(
+        editing_template_id="edit_template_014",
+        editing_template_version=1,
+        format_title="메뉴 소개",
+        reference_url="internal://template",
+    )
+
+    guide = ai_client.get_shooting_guide(
+        video_format,
+        Store(id=10, user_id=1, name="행복분식", category="분식"),
+        ShortsProject(id=30, store_id=10, promotion_purpose=PromotionPurpose.MENU),
+        menu_name="떡볶이",
+    )
+
+    assert guide.tasks[0].scene_index is None
+
+
 def test_editing_status_maps_queue_and_progress(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "AI_SERVER_URL", "http://ai.internal")
     monkeypatch.setattr(
